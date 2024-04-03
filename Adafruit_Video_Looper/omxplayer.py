@@ -58,7 +58,7 @@ class OMXPlayer:
         # Assemble list of arguments.
         args = ['omxplayer']
         args.extend(['-o', self._sound])  # Add sound arguments.
-        args.extend(['-l', '00:99:00'])  # Add starting position.
+        args.extend(['-l', '00:05:00'])  # Add starting position.
         args.extend(self._extra_args)     # Add extra arguments from config.
         if vol != 0:
             args.extend(['--vol', str(vol)])
