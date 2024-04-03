@@ -5,7 +5,7 @@ set -e
 
 # Make sure script is run as root.
 if [ "$(id -u)" != "0" ]; then
-  echo "Must be run as root with sudo! Try: sudo ./install.sh"
+  echo "Must be run as root with sudo! Try: sudo ./update.sh"
   exit 1
 fi
 
