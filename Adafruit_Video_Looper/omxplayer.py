@@ -19,7 +19,7 @@ class OMXPlayer:
         self._process = None
         self._temp_directory = None
         self._load_config(config)
-        self._start_time = datetime.datetime.now()
+        self._start_time = None
 
     def __del__(self):
         if self._temp_directory:
@@ -49,6 +49,7 @@ class OMXPlayer:
                 self._subtitle_header = '00:00:00,00 --> {:d}:{:02d}:{:02d},00\n'.format(h, m, s)
             else:
                 self._subtitle_header = '00:00:00,00 --> 99:59:59,00\n'
+        self._start_time = datetime.datetime.now()
 
     def supported_extensions(self):
         """Return list of supported file extensions."""
