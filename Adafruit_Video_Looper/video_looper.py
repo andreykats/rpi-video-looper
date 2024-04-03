@@ -62,8 +62,8 @@ class VideoLooper:
         self._keyboard_control = self._config.getboolean('control', 'keyboard_control')
         self._copyloader = self._config.getboolean('copymode', 'copyloader')
         # Get seconds for countdown from config
-        self._countdown_time = 3
-        # Get seconds for waittime bewteen files from config
+        self._countdown_time = self._config.getint('video_looper', 'countdown_time')
+        # Get seconds for waittime bewteen files from configsudo 
         self._wait_time = self._config.getint('video_looper', 'wait_time')
         # Get timedisplay settings
         self._datetime_display = self._config.getboolean('video_looper', 'datetime_display')
