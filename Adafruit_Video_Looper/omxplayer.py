@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+import datetime
 
 from .alsa_config import parse_hw_device
 
@@ -18,6 +19,7 @@ class OMXPlayer:
         self._process = None
         self._temp_directory = None
         self._load_config(config)
+        self._start_time = datetime.datetime.now()
 
     def __del__(self):
         if self._temp_directory:
@@ -58,7 +60,7 @@ class OMXPlayer:
         # Assemble list of arguments.
         args = ['omxplayer']
         args.extend(['-o', self._sound])  # Add sound arguments.
-        args.extend(['-l', '00:05:00'])  # Add starting position.
+        args.extend(['-l', self.get_elapsed_time])  # Add starting position.
         args.extend(self._extra_args)     # Add extra arguments from config.
         if vol != 0:
             args.extend(['--vol', str(vol)])
@@ -117,6 +119,15 @@ class OMXPlayer:
     @staticmethod
     def can_loop_count():
         return False
+    
+    def get_elapsed_time(self):
+        """Return the elapsed time since the movie started in the format 00:00:00."""
+        if self._start_time is None:
+            return '00:00:00'
+        elapsed_time = datetime.datetime.now() - self._start_time
+        hours, remainder = divmod(elapsed_time.seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        return '{:02}:{:02}:{:02}'.format(hours, minutes, seconds)
 
 
 def create_player(config, **kwargs):
