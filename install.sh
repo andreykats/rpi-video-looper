@@ -14,22 +14,22 @@ echo "Installing dependencies..."
 echo "=========================="
 apt update && apt -y install python3 python3-pip python3-pygame supervisor omxplayer ntfs-3g exfat-fuse
 
-if [ "$*" != "no_hello_video" ]
-then
-	echo "Installing hello_video..."
-	echo "========================="
-	apt -y install git build-essential python3-dev
-	git clone https://github.com/adafruit/pi_hello_video
-	cd pi_hello_video
-	./rebuild.sh
-	cd hello_video
-	make install
-	cd ../..
-	rm -rf pi_hello_video
-else
-    echo "hello_video was not installed"
-    echo "=========================="
-fi
+# if [ "$*" != "no_hello_video" ]
+# then
+# 	echo "Installing hello_video..."
+# 	echo "========================="
+# 	apt -y install git build-essential python3-dev
+# 	git clone https://github.com/adafruit/pi_hello_video
+# 	cd pi_hello_video
+# 	./rebuild.sh
+# 	cd hello_video
+# 	make install
+# 	cd ../..
+# 	rm -rf pi_hello_video
+# else
+#     echo "hello_video was not installed"
+#     echo "=========================="
+# fi
 
 echo "Installing video_looper program..."
 echo "=================================="
