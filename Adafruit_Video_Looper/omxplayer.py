@@ -20,6 +20,7 @@ class OMXPlayer:
         self._temp_directory = None
         self._load_config(config)
         self._start_time = None
+        print('OMXPlayer initialized')
 
     def __del__(self):
         if self._temp_directory:
@@ -50,6 +51,7 @@ class OMXPlayer:
             else:
                 self._subtitle_header = '00:00:00,00 --> 99:59:59,00\n'
         self._start_time = datetime.datetime.now()
+        print('OMXPlayer config loaded')
 
     def supported_extensions(self):
         """Return list of supported file extensions."""
@@ -124,6 +126,7 @@ class OMXPlayer:
     def get_elapsed_time(self):
         """Return the elapsed time since the movie started in the format 00:00:00."""
         if self._start_time is None:
+            print('Start time is None')
             return '00:00:00'
         elapsed_time = datetime.datetime.now() - self._start_time
         hours, remainder = divmod(elapsed_time.seconds, 3600)
