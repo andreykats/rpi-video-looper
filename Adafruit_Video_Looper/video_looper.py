@@ -64,7 +64,7 @@ class VideoLooper:
         # Get seconds for countdown from config
         self._countdown_time = self._config.getint('video_looper', 'countdown_time')
         # Get seconds for waittime bewteen files from config
-        self._wait_time = self._config.getint('video_looper', 'wait_time')
+        self._wait_time = 3
         # Get timedisplay settings
         self._datetime_display = self._config.getboolean('video_looper', 'datetime_display')
         self._top_datetime_display_format = self._config.get('video_looper', 'top_datetime_display_format', raw=True)
