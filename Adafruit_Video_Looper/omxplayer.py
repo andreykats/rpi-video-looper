@@ -61,7 +61,7 @@ class OMXPlayer:
         # Assemble list of arguments.
         args = ['omxplayer']
         args.extend(['-o', self._sound])  # Add sound arguments.
-        print("time: " + self.get_elapsed_time)
+        print("time: " + self.get_elapsed_time())
         args.extend(['-l', "00:07:00"])  # Add starting position.
         args.extend(self._extra_args)     # Add extra arguments from config.
         if vol != 0:
