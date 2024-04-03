@@ -31,8 +31,8 @@ apt update && apt -y install python3 python3-pip python3-pygame supervisor omxpl
 #     echo "=========================="
 # fi
 
-# echo "Installing video_looper program..."
-# echo "=================================="
+echo "Installing video_looper program..."
+echo "=================================="
 
 # change the directoy to the script location
 cd "$(dirname "$0")"
