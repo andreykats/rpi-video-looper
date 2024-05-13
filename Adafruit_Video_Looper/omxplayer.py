@@ -54,14 +54,38 @@ class OMXPlayer:
         """Return list of supported file extensions."""
         return self._extensions
 
-    def play(self, movie, loop=None, vol=0):
-        """Play the provided movie file, optionally looping it repeatedly."""
-        self.stop(3)  # Up to 3 second delay to let the old player stop.
+    def get_movie_length(self, movie):
+        """Extract the length of the movie from the filename."""
+        filename = os.path.basename(movie.target)
+        length_str = filename.split('_')[0]  # Assuming the length is before the first underscore
+        hours, minutes, seconds = map(int, length_str.split(':'))
+        return hours * 3600 + minutes * 60 + seconds
+
+    def assemble_args(self, movie, loop=None, vol=0):
+        """Assemble the list of arguments for the omxplayer command."""
         # Assemble list of arguments.
         args = ['omxplayer']
         args.extend(['-o', self._sound])  # Add sound arguments.
-        args.extend(['-l', self.get_elapsed_time()])  # Add starting position.
-        args.extend(self._extra_args)     # Add extra arguments from config.
+
+        # Get the length of the video in seconds
+        video_length = self.get_movie_length(movie)
+
+        # Get the elapsed time in seconds
+        elapsed_time = self.get_elapsed_time()
+        hours, minutes, seconds = map(int, elapsed_time.split(':'))
+        elapsed_time_in_seconds = hours * 3600 + minutes * 60 + seconds
+
+        # If the elapsed time is longer than the video length, calculate the remainder
+        if elapsed_time_in_seconds > video_length:
+            elapsed_time_in_seconds %= video_length
+
+        # Convert the elapsed time back to the format 00:00:00
+        hours, remainder = divmod(elapsed_time_in_seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        elapsed_time = '{:02}:{:02}:{:02}'.format(hours, minutes, seconds)
+
+        args.extend(['-l', elapsed_time])  # Add starting position.
+        args.extend(self._extra_args)   
         if vol != 0:
             args.extend(['--vol', str(vol)])
         if loop is None:
@@ -75,13 +99,19 @@ class OMXPlayer:
                 f.write(movie.title)
             args.extend(['--subtitles', srt_path])
         args.append(movie.target)       # Add movie file path.
+        return args
+    
+    def play(self, movie, loop=None, vol=0):
+        """Play the provided movie file, optionally looping it repeatedly."""
+        self.stop(3)  # Up to 3 second delay to let the old player stop.
+        args = self.assemble_args(movie, loop, vol)
         # Run omxplayer process and direct standard output to /dev/null.
         # Establish input pipe for commands
         self._process = subprocess.Popen(args,
-                                         stdout=open(os.devnull, 'wb'),
-                                         stdin=subprocess.PIPE,
-                                         close_fds=True)
-
+                                        stdout=open(os.devnull, 'wb'),
+                                        stdin=subprocess.PIPE,
+                                        close_fds=True)
+    
     def pause(self):
         self.sendKey("p")
     

@@ -9,7 +9,7 @@ import pickle
 # Create a queue
 relay_queue = queue.Queue()
 
-# I2C address
+# Rotary encoder's I2C address
 I2C_ADDRESS = 0x8
 
 # GPIO pin for the crelay (modify as needed)
@@ -24,7 +24,7 @@ bus = smbus.SMBus(1)  # Use bus 1 (check your specific Pi model)
 GPIO.setmode(GPIO.BCM)  # Use Broadcom pin numbering
 
 # Channel list with rotary encoder position and frequency
-# (channel, rotary_position, frequency)
+# (channel, rotary_position, modulator frequency)
 CHANNEL_LIST = [
     (1, 39, None),
     (1, 0, None),
