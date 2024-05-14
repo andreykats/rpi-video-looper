@@ -67,24 +67,26 @@ class OMXPlayer:
         args = ['omxplayer']
         args.extend(['-o', self._sound])  # Add sound arguments.
 
-        # Get the length of the video in seconds
-        video_length = self.get_movie_length(movie)
+        # # Get the length of the video in seconds
+        # video_length = self.get_movie_length(movie)
 
-        # Get the elapsed time in seconds
-        elapsed_time = self.get_elapsed_time()
-        hours, minutes, seconds = map(int, elapsed_time.split(':'))
-        elapsed_time_in_seconds = hours * 3600 + minutes * 60 + seconds
+        # # Get the elapsed time in seconds
+        # elapsed_time = self.get_elapsed_time()
+        # hours, minutes, seconds = map(int, elapsed_time.split(':'))
+        # elapsed_time_in_seconds = hours * 3600 + minutes * 60 + seconds
 
-        # If the elapsed time is longer than the video length, calculate the remainder
-        if elapsed_time_in_seconds > video_length:
-            elapsed_time_in_seconds %= video_length
+        # # If the elapsed time is longer than the video length, calculate the remainder
+        # if elapsed_time_in_seconds > video_length:
+        #     elapsed_time_in_seconds %= video_length
 
-        # Convert the elapsed time back to the format 00:00:00
-        hours, remainder = divmod(elapsed_time_in_seconds, 3600)
-        minutes, seconds = divmod(remainder, 60)
-        elapsed_time = '{:02}:{:02}:{:02}'.format(hours, minutes, seconds)
+        # # Convert the elapsed time back to the format 00:00:00
+        # hours, remainder = divmod(elapsed_time_in_seconds, 3600)
+        # minutes, seconds = divmod(remainder, 60)
+        # elapsed_time = '{:02}:{:02}:{:02}'.format(hours, minutes, seconds)
 
-        args.extend(['-l', elapsed_time])  # Add starting position.
+        # args.extend(['-l', elapsed_time])  # Add starting position.
+
+        args.extend(['-l', self.get_elapsed_time()])  # Add starting position.
         args.extend(self._extra_args)   
         if vol != 0:
             args.extend(['--vol', str(vol)])

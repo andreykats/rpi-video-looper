@@ -24,6 +24,6 @@ echo "==========================================="
 
 cp ./assets/video_looper.conf /etc/supervisor/conf.d/
 
-service supervisor restart
+#service supervisor restart
 
 echo "Finished!"
