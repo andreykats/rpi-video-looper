@@ -509,7 +509,8 @@ class VideoLooper:
                         movie.clear_playcount()
                         movie = self._playlist.get_next(self._is_random, self._resume_playlist)
 
-                    movie.was_played()
+                    # Commented this out so the video restarts after finishing
+                    # movie.was_played()
 
                     if self._wait_time > 0 and not self._firstStart:
                         if(self._datetime_display):

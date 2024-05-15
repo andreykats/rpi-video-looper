@@ -54,11 +54,14 @@ class OMXPlayer:
         """Return list of supported file extensions."""
         return self._extensions
 
-    def get_movie_length(self, movie):
+    def extract_video_length(self, movie):
         """Extract the length of the movie from the filename."""
+        # Filename example:
+        # 01-12-23_Name.mp4
         filename = os.path.basename(movie.target)
         length_str = filename.split('_')[0]  # Assuming the length is before the first underscore
-        hours, minutes, seconds = map(int, length_str.split(':'))
+        hours, minutes, seconds = map(int, length_str.split('-'))
+        # return length in seconds
         return hours * 3600 + minutes * 60 + seconds
 
     def assemble_args(self, movie, loop=None, vol=0):
@@ -67,26 +70,22 @@ class OMXPlayer:
         args = ['omxplayer']
         args.extend(['-o', self._sound])  # Add sound arguments.
 
-        # # Get the length of the video in seconds
-        # video_length = self.get_movie_length(movie)
+        # Get the length of the video in seconds
+        video_length_in_seconds = self.extract_video_length(movie)
 
-        # # Get the elapsed time in seconds
-        # elapsed_time = self.get_elapsed_time()
-        # hours, minutes, seconds = map(int, elapsed_time.split(':'))
-        # elapsed_time_in_seconds = hours * 3600 + minutes * 60 + seconds
+        # Get the elapsed playback time in seconds
+        elapsed_time_in_seconds = self.get_elapsed_time_in_seconds()
 
-        # # If the elapsed time is longer than the video length, calculate the remainder
-        # if elapsed_time_in_seconds > video_length:
-        #     elapsed_time_in_seconds %= video_length
+        # If the elapsed time is longer than the video length, calculate the remainder
+        if elapsed_time_in_seconds >= video_length_in_seconds:
+            elapsed_time_in_seconds = elapsed_time_in_seconds % video_length_in_seconds
 
-        # # Convert the elapsed time back to the format 00:00:00
-        # hours, remainder = divmod(elapsed_time_in_seconds, 3600)
-        # minutes, seconds = divmod(remainder, 60)
-        # elapsed_time = '{:02}:{:02}:{:02}'.format(hours, minutes, seconds)
+        # Convert the elapsed time to 00:00:00 format
+        hours, remainder = divmod(elapsed_time_in_seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        elapsed_time = '{:02}:{:02}:{:02}'.format(hours, minutes, seconds)
 
-        # args.extend(['-l', elapsed_time])  # Add starting position.
-
-        args.extend(['-l', self.get_elapsed_time()])  # Add starting position.
+        args.extend(['-l', elapsed_time])  # Add starting position.
         args.extend(self._extra_args)   
         if vol != 0:
             args.extend(['--vol', str(vol)])
@@ -152,15 +151,21 @@ class OMXPlayer:
     def can_loop_count():
         return False
     
-    def get_elapsed_time(self):
+    def get_elapsed_time_in_seconds(self):
+        elapsed_time = datetime.datetime.now() - self._start_time
+        return elapsed_time.seconds
+
+    def test_get_elapsed_time(self):
         """Return the elapsed time since the movie started in the format 00:00:00."""
         if self._start_time is None:
             print('Start time is None')
             return '00:00:00'
         elapsed_time = datetime.datetime.now() - self._start_time
-        hours, remainder = divmod(elapsed_time.seconds, 3600)
-        minutes, seconds = divmod(remainder, 60)
-        return '{:02}:{:02}:{:02}'.format(hours, minutes, seconds)
+        # hours, remainder = divmod(elapsed_time.seconds, 3600)
+        # minutes, seconds = divmod(remainder, 60)
+        # return '{:02}:{:02}:{:02}'.format(hours, minutes + 20, seconds)
+        # return elapsed_time as an integer in seconds
+        return elapsed_time.seconds + 1200
 
 
 def create_player(config, **kwargs):
