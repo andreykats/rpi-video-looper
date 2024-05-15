@@ -60,7 +60,7 @@ def get_channel_from_position(position):
             return (channel, frequency)
     return (None, None)
 
-def change_channel():
+def change_channel(callback=None):
     # Read the rotary encoder position
     rotary_position = read_remote_rotary_encoder()
     # Get coresponding channel
@@ -75,7 +75,7 @@ def change_channel():
     global previous_source
 
     if channel is None:
-        return
+        return None
 
     if channel != previous_channel:
         if channel == 13:
@@ -99,6 +99,10 @@ def change_channel():
                 previous_frequency = frequency
                 save_previous_values(previous_frequency, current_source)
 
+                # Call the callback if it's provided
+                if callback is not None:
+                    callback(channel)
+
         if channel < previous_channel:
             print(f"Channel DOWN: {channel}")
             if frequency is not None:
@@ -112,6 +116,10 @@ def change_channel():
 
                 previous_frequency = frequency
                 save_previous_values(previous_frequency, current_source)
+
+                # Call the callback if it's provided
+                if callback is not None:
+                    callback(channel)
                     
         previous_channel = channel
 
@@ -182,6 +190,9 @@ def initialize_relays():
     else:
         GPIO.setup(RELAY_SOURCE_PIN, GPIO.OUT, initial=GPIO.HIGH)  
 
+def on_channel_change(channel):
+    print(f"Channel changed to {channel}")
+
 if __name__ == "__main__":
     try:
         # Start a thread to execute the relay commands
@@ -194,7 +205,10 @@ if __name__ == "__main__":
         initialize_relays()
 
         while True:
-            change_channel()
+            change_channel(on_channel_change)
+            # channel = change_channel()
+            # if channel is not None:
+            #     print(f"Channel: {channel}")
 
     except KeyboardInterrupt:
         print("\nExiting. Cleanup GPIO...")
