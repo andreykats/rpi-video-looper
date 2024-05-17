@@ -51,11 +51,22 @@ CHANNEL_LIST = [
 ]
 
 class ChannelSwitcher:
-    def __init__(self):
+    def __init__(self, on_channel_change=None):
         self.previous_channel = 0
         self.previous_frequency = 0
         self.current_source = 'hdmi'
+        self.on_channel_change = on_channel_change
         self.initialize_relays()
+
+        # Start a thread to execute the relay commands
+        threading.Thread(target=self.execute_relay_commands, daemon=True).start()
+
+        # Load previously set frequency from file
+        self.previous_frequency, self.current_source = self.load_previous_values()
+
+    def start(self):
+        while True:
+            self.change_channel()
 
     def get_channel_from_position(self, position):
         for channel, rotary_position, frequency in CHANNEL_LIST:
@@ -63,7 +74,7 @@ class ChannelSwitcher:
                 return (channel, frequency)
         return (None, None)
 
-    def change_channel(self, callback=None):
+    def change_channel(self):
         # Read the rotary encoder position
         rotary_position = self.read_remote_rotary_encoder()
         # Get coresponding channel
@@ -89,9 +100,9 @@ class ChannelSwitcher:
                     self.relay_source_composite()
 
             if channel > self.previous_channel:
-                print(f"Channel UP: {channel}")
+                # print(f"Channel UP: {channel}")
                 if frequency is not None:
-                    print(f"Switching to frequency: {frequency}")
+                    # print(f"Switching to frequency: {frequency}")
                     if frequency is not None and frequency < self.previous_frequency:
                         for _ in range(self.previous_frequency - frequency):
                             self.relay_channel_down()
@@ -99,17 +110,18 @@ class ChannelSwitcher:
                         for _ in range(frequency - self.previous_frequency):
                             self.relay_channel_up()
 
+                    # Call the callback if it's provided
+                    if self.on_channel_change is not None:
+                        if frequency != self.previous_frequency:
+                            self.on_channel_change(channel, "up")
+
                     self.previous_frequency = frequency
                     self.save_previous_values(self.previous_frequency, self.current_source)
 
-                    # Call the callback if it's provided
-                    if callback is not None:
-                        callback(channel)
-
             if channel < self.previous_channel:
-                print(f"Channel DOWN: {channel}")
+                # print(f"Channel DOWN: {channel}")
                 if frequency is not None:
-                    print(f"Switching to frequency: {frequency}")
+                    # print(f"Switching to frequency: {frequency}")
                     if frequency > self.previous_frequency:
                         for _ in range(frequency - self.previous_frequency):
                             self.relay_channel_up()
@@ -117,13 +129,15 @@ class ChannelSwitcher:
                         for _ in range(self.previous_frequency - frequency):
                             self.relay_channel_down()
 
+                    # Call the callback if it's provided
+                    if self.on_channel_change is not None:
+                        if frequency != self.previous_frequency:
+                            self.on_channel_change(channel, "down")
+
                     self.previous_frequency = frequency
                     self.save_previous_values(self.previous_frequency, self.current_source)
 
-                    # Call the callback if it's provided
-                    if callback is not None:
-                        callback(channel)
-                        
+
             self.previous_channel = channel
 
     def read_remote_rotary_encoder(self):
@@ -169,7 +183,7 @@ class ChannelSwitcher:
             relay_queue.task_done()
 
             # Add a delay before processing the next item
-            time.sleep(0.02)  # Adjust the delay as needed
+            time.sleep(0.03)  # Adjust the delay as needed
 
     # Save previous_frequency and previous_source to a file
     def save_previous_values(self, previous_frequency, current_source):
@@ -193,29 +207,14 @@ class ChannelSwitcher:
         else:
             GPIO.setup(RELAY_SOURCE_PIN, GPIO.OUT, initial=GPIO.HIGH)  
 
-    def on_channel_change(self, channel):
-        print(f"Channel changed to {channel}")
-
-    def main(self):
-        # Start a thread to execute the relay commands
-        threading.Thread(target=self.execute_relay_commands, daemon=True).start()
-
-        # Load previously set frequency from file
-        self.previous_frequency, self.current_source = self.load_previous_values()
-        
-        # Initialize the relays
-        self.initialize_relays()
-
-        while True:
-            self.change_channel(self.on_channel_change)
-            # channel = change_channel()
-            # if channel is not None:
-            #     print(f"Channel: {channel}")
 
 if __name__ == "__main__":
+    def handle_switch(channel, direction):
+        print(f"DEBUG: channel changed {direction} to: {channel}")
+
     try:
-        controller = ChannelSwitcher()
-        controller.main()
+        controller = ChannelSwitcher(handle_switch)
+        controller.start()
 
     except KeyboardInterrupt:
         print("\nExiting. Cleanup GPIO...")

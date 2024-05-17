@@ -19,6 +19,7 @@ import RPi.GPIO as GPIO
 from .alsa_config import parse_hw_device
 from .model import Playlist, Movie
 from .playlist_builders import build_playlist_m3u
+from .rotary import ChannelSwitcher
 
 # Basic video looper architecure:
 #
@@ -114,7 +115,11 @@ class VideoLooper:
         if self._keyboard_control:
             self._keyboard_thread = threading.Thread(target=self._handle_keyboard_shortcuts, daemon=True)
             self._keyboard_thread.start()
-        
+
+        # Lets initialize the channel switcher on its own thread but delay its start until the vidoe playlist is created
+        self._channel_switcher = ChannelSwitcher(self._handle_rotary_channel_switcher)
+        self._channel_switcher_thread = threading.Thread(target=self._channel_switcher.start, daemon=True)    
+
         pinMapSetting = self._config.get('control', 'gpio_pin_map', raw=True)
         if pinMapSetting:
             try:
@@ -423,7 +428,20 @@ class VideoLooper:
                 cmd.extend(('-c', str(self._alsa_hw_device[0])))
             cmd.extend(('set', self._alsa_hw_vol_control, '--', self._alsa_hw_vol))
             subprocess.check_call(cmd)
-            
+
+    def _handle_rotary_channel_switcher(self, channel, direction):
+        if self._running and direction == 'up':
+            print(f"going UP to channel: {channel}")
+            self._playlist.seek(1)
+            self._player.stop(3)
+            self._playbackStopped = False
+
+        elif self._running and direction == 'down':
+            print(f"going DOWN to channel: {channel}")
+            self._playlist.seek(-1)
+            self._player.stop(3)
+            self._playbackStopped = False       
+
     def _handle_keyboard_shortcuts(self):
         while self._running:
             event = pygame.event.wait()
@@ -497,6 +515,10 @@ class VideoLooper:
         self._set_hardware_volume()
         movie = self._playlist.get_next(self._is_random, self._resume_playlist)
         # Main loop to play videos in the playlist and listen for file changes.
+
+        # Start rotary encoder channel switcher thread after our playlist has been created
+        self._channel_switcher_thread.start()
+
         while self._running:
             # Load and play a new movie if nothing is playing.
             if not self._player.is_playing() and not self._playbackStopped:
