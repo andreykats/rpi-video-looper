@@ -80,7 +80,7 @@ class ChannelSwitcher:
         if channel is None:
             return None
 
-        if channel != previous_channel:
+        if channel != self.previous_channel:
             if channel == 13:
                 if self.current_source != 'hdmi':
                     self.relay_source_hdmi()
@@ -88,43 +88,43 @@ class ChannelSwitcher:
                 if self.current_source != 'composite':
                     self.relay_source_composite()
 
-            if channel > previous_channel:
+            if channel > self.previous_channel:
                 print(f"Channel UP: {channel}")
                 if frequency is not None:
                     print(f"Switching to frequency: {frequency}")
-                    if frequency is not None and frequency < previous_frequency:
-                        for _ in range(previous_frequency - frequency):
+                    if frequency is not None and frequency < self.previous_frequency:
+                        for _ in range(self.previous_frequency - frequency):
                             self.relay_channel_down()
                     else:
-                        for _ in range(frequency - previous_frequency):
+                        for _ in range(frequency - self.previous_frequency):
                             self.relay_channel_up()
 
-                    previous_frequency = frequency
-                    self.save_previous_values(previous_frequency, self.current_source)
+                    self.previous_frequency = frequency
+                    self.save_previous_values(self.previous_frequency, self.current_source)
 
                     # Call the callback if it's provided
                     if callback is not None:
                         callback(channel)
 
-            if channel < previous_channel:
+            if channel < self.previous_channel:
                 print(f"Channel DOWN: {channel}")
                 if frequency is not None:
                     print(f"Switching to frequency: {frequency}")
-                    if frequency > previous_frequency:
-                        for _ in range(frequency - previous_frequency):
+                    if frequency > self.previous_frequency:
+                        for _ in range(frequency - self.previous_frequency):
                             self.relay_channel_up()
                     else:
-                        for _ in range(previous_frequency - frequency):
+                        for _ in range(self.previous_frequency - frequency):
                             self.relay_channel_down()
 
-                    previous_frequency = frequency
-                    self.save_previous_values(previous_frequency, self.current_source)
+                    self.previous_frequency = frequency
+                    self.save_previous_values(self.previous_frequency, self.current_source)
 
                     # Call the callback if it's provided
                     if callback is not None:
                         callback(channel)
                         
-            previous_channel = channel
+            self.previous_channel = channel
 
     def read_remote_rotary_encoder(self):
         return int(bus.read_byte(I2C_ADDRESS))
