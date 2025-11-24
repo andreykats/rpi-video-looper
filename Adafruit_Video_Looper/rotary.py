@@ -26,43 +26,60 @@ GPIO.setmode(GPIO.BCM)  # Use Broadcom pin numbering
 # Channel list with rotary encoder position and frequency
 # (channel, rotary_position, modulator frequency)
 CHANNEL_LIST = [
-    (1, 39, None),
-    (1, 0, None),
-    (2, 2, None),
-    (2, 3, None),
-    (3, 6, None),
-    (4, 8, None),
-    (4, 9, None),
-    (5, 12, None),
-    (6, 15, None),
-    (6, 16, None),
-    (7, 18, 16),
-    (8, 21, 18),
-    (8, 22, 18),
-    (9, 24, None),
-    (10, 27, 20),
-    (10, 28, 20),
-    (11, 30, 21),
-    (11, 31, 21),
-    (12, 33, 21),
-    (12, 34, 21),
-    (13, 36, 22),
-    (13, 37, 22)
+    (1, 21, None),
+    (1, 22, None),
+    (1, 23, None),
+    (2, 24, None),
+    (2, 25, None),
+    (2, 26, None),
+    (3, 27, None),
+    (3, 28, None),
+    (3, 29, None),
+    (4, 31, None),
+    (4, 32, None),
+    (5, 33, None),
+    (5, 34, None),
+    (5, 35, None),
+    (6, 37, None),
+    (6, 38, None),
+    (6, 39, None),
+    (7, 0, 16),
+    (7, 1, 16),
+    (7, 2, 16),
+    (8, 3, 18),
+    (8, 4, 18),
+    (8, 5, 18),
+    (9, 6, None),
+    (9, 7, None),
+    (9, 8, None),
+    (10, 9, 20),
+    (10, 10, 20),
+    (10, 11, 20),
+    (11, 12, 21),
+    (11, 13, 21),
+    (11, 14, 21),
+    (12, 15, 21),
+    (12, 16, 21),
+    (12, 17, 21),
+    (13, 18, 22),
+    (13, 19, 22),
+    (13, 20, 22)
 ]
 
 class ChannelSwitcher:
     def __init__(self, on_channel_change=None):
         self.previous_channel = 0
         self.previous_frequency = 0
-        self.current_source = 'hdmi'
+        self.current_source = 'composite'
         self.on_channel_change = on_channel_change
+
+        # Load previously set frequency from file
+        self.previous_frequency = self.load_previous_values()
+
         self.initialize_relays()
 
         # Start a thread to execute the relay commands
         threading.Thread(target=self.execute_relay_commands, daemon=True).start()
-
-        # Load previously set frequency from file
-        self.previous_frequency, self.current_source = self.load_previous_values()
 
     def start(self):
         while True:
@@ -81,7 +98,7 @@ class ChannelSwitcher:
         channel, frequency = self.get_channel_from_position(rotary_position)
 
         # Print the angle (for debugging)
-        #print(f"Encoder Position: {rotary_position}, Channel: {channel}, Frequency: {frequency}")
+        # print(f"Encoder Position: {rotary_position}, Channel: {channel}, Frequency: {frequency}")
 
         # If the channel has changed, send change channel command
         # global previous_channel
@@ -92,16 +109,14 @@ class ChannelSwitcher:
             return None
 
         if channel != self.previous_channel:
-            if channel == 13:
-                if self.current_source != 'hdmi':
-                    self.relay_source_hdmi()
-            else:
-                if self.current_source != 'composite':
-                    self.relay_source_composite()
-
             if channel > self.previous_channel:
                 # print(f"Channel UP: {channel}")
                 if frequency is not None:
+                    # Call the callback if it's provided
+                    if self.on_channel_change is not None:
+                        if frequency != self.previous_frequency:
+                            self.on_channel_change(channel, "up")
+
                     # print(f"Switching to frequency: {frequency}")
                     if frequency is not None and frequency < self.previous_frequency:
                         for _ in range(self.previous_frequency - frequency):
@@ -110,17 +125,17 @@ class ChannelSwitcher:
                         for _ in range(frequency - self.previous_frequency):
                             self.relay_channel_up()
 
+                    self.previous_frequency = frequency
+                    self.save_previous_values(self.previous_frequency)
+
+            elif channel < self.previous_channel:
+                # print(f"Channel DOWN: {channel}")
+                if frequency is not None:
                     # Call the callback if it's provided
                     if self.on_channel_change is not None:
                         if frequency != self.previous_frequency:
-                            self.on_channel_change(channel, "up")
+                            self.on_channel_change(channel, "down")
 
-                    self.previous_frequency = frequency
-                    self.save_previous_values(self.previous_frequency, self.current_source)
-
-            if channel < self.previous_channel:
-                # print(f"Channel DOWN: {channel}")
-                if frequency is not None:
                     # print(f"Switching to frequency: {frequency}")
                     if frequency > self.previous_frequency:
                         for _ in range(frequency - self.previous_frequency):
@@ -129,14 +144,15 @@ class ChannelSwitcher:
                         for _ in range(self.previous_frequency - frequency):
                             self.relay_channel_down()
 
-                    # Call the callback if it's provided
-                    if self.on_channel_change is not None:
-                        if frequency != self.previous_frequency:
-                            self.on_channel_change(channel, "down")
-
                     self.previous_frequency = frequency
-                    self.save_previous_values(self.previous_frequency, self.current_source)
+                    self.save_previous_values(self.previous_frequency)
 
+            if channel is 13:
+                if self.current_source != 'hdmi':
+                    self.relay_source_hdmi()
+            else:
+                if self.current_source != 'composite':
+                    self.relay_source_composite()
 
             self.previous_channel = channel
 
@@ -146,13 +162,11 @@ class ChannelSwitcher:
     def relay_source_hdmi(self):
         print("Switching to HDMI")
         GPIO.output(RELAY_SOURCE_PIN, GPIO.LOW) 
-        # global current_source
         self.current_source = 'hdmi'
 
     def relay_source_composite(self):
         print("Switching to Composite")
         GPIO.output(RELAY_SOURCE_PIN, GPIO.HIGH) 
-        # global current_source
         self.current_source = 'composite'
 
     def relay_channel_up(self):
@@ -186,9 +200,9 @@ class ChannelSwitcher:
             time.sleep(0.03)  # Adjust the delay as needed
 
     # Save previous_frequency and previous_source to a file
-    def save_previous_values(self, previous_frequency, current_source):
+    def save_previous_values(self, previous_frequency):
         with open('previous_values.pkl', 'wb') as f:
-            pickle.dump((previous_frequency, current_source), f)
+            pickle.dump((previous_frequency), f)
 
     # Load previous_frequency and previous_source from a file
     def load_previous_values(self):
@@ -196,13 +210,13 @@ class ChannelSwitcher:
             with open('previous_values.pkl', 'rb') as f:
                 return pickle.load(f)
         except FileNotFoundError:
-            return 0, None  # Return 0 and None if file does not exist
+            return 0  # Return 0 and None if file does not exist
 
     def initialize_relays(self):
         GPIO.setup(RELAY_UP_PIN, GPIO.OUT, initial=GPIO.LOW)  # Set relay pin as output and start in a low state (relay off)
         GPIO.setup(RELAY_DOWN_PIN, GPIO.OUT, initial=GPIO.LOW)  # Set relay pin as output and start in a low state (relay off)
 
-        if self.current_source == 'hdmi':
+        if self.current_source == 'composite':
             GPIO.setup(RELAY_SOURCE_PIN, GPIO.OUT, initial=GPIO.LOW)  
         else:
             GPIO.setup(RELAY_SOURCE_PIN, GPIO.OUT, initial=GPIO.HIGH)  

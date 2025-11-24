@@ -86,6 +86,7 @@ class OMXPlayer:
         elapsed_time = '{:02}:{:02}:{:02}'.format(hours, minutes, seconds)
 
         args.extend(['-l', elapsed_time])  # Add starting position.
+        args.extend(['--aspect-mode', 'stretch']) # Fill the screen with the video
         args.extend(self._extra_args)   
         if vol != 0:
             args.extend(['--vol', str(vol)])
