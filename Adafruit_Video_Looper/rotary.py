@@ -21,6 +21,7 @@ bus = smbus.SMBus(1)  # Use bus 1 (check your specific Pi model)
 
 # Set up GPIO for Relays
 GPIO.setmode(GPIO.BCM)  # Use Broadcom pin numbering
+GPIO.setwarnings(False)  # Disable warnings if pins are already in use
 
 # Channel to frequency mapping
 # Arduino sends channel number (0-13) directly via I2C
@@ -38,11 +39,14 @@ class ChannelSwitcher:
 
         # Load previously set frequency from file
         self.previous_frequency = self.load_previous_values()
+        print(f"ChannelSwitcher initialized: previous_frequency = {self.previous_frequency}")
 
         self.initialize_relays()
+        print(f"Relays initialized on GPIO pins: UP={RELAY_UP_PIN}, DOWN={RELAY_DOWN_PIN}")
 
         # Start a thread to execute the relay commands
         threading.Thread(target=self.execute_relay_commands, daemon=True).start()
+        print("Starting relay command executor thread...")
 
     def start(self):
         while True:
@@ -59,16 +63,19 @@ class ChannelSwitcher:
     def _tune_to_frequency(self, target_frequency):
         """Tune to target frequency by pulsing relays."""
         if target_frequency == self.previous_frequency:
+            print(f"Already at frequency {target_frequency}, skipping relay pulses")
             return
 
         if target_frequency > self.previous_frequency:
             # Frequency UP
             pulses = target_frequency - self.previous_frequency
+            print(f"Tuning UP from {self.previous_frequency} to {target_frequency} ({pulses} pulses)")
             for _ in range(pulses):
                 self.relay_channel_up()
         else:
             # Frequency DOWN
             pulses = self.previous_frequency - target_frequency
+            print(f"Tuning DOWN from {self.previous_frequency} to {target_frequency} ({pulses} pulses)")
             for _ in range(pulses):
                 self.relay_channel_down()
 
@@ -93,6 +100,8 @@ class ChannelSwitcher:
         # Handle relay tuning if frequency is specified
         if frequency is not None:
             self._tune_to_frequency(frequency)
+        else:
+            print(f"Channel {channel} has no frequency - relays will not activate")
 
         # Call callback with both current and previous channel
         if self.on_channel_change is not None:
@@ -105,26 +114,33 @@ class ChannelSwitcher:
         return int(bus.read_byte(I2C_ADDRESS))
 
     def relay_channel_up(self):
+        print(f"  → Relay UP queued (GPIO {RELAY_UP_PIN})")
         def engage():
+            print(f"    → GPIO {RELAY_UP_PIN} HIGH")
             GPIO.output(RELAY_UP_PIN, GPIO.HIGH)  # Turn on the relay
 
         def disengage():
+            print(f"    → GPIO {RELAY_UP_PIN} LOW")
             GPIO.output(RELAY_UP_PIN, GPIO.LOW)  # Turn off the relay
 
         relay_queue.put(engage)  # Add function to queue
         relay_queue.put(disengage)  # Add function to queue
 
     def relay_channel_down(self):
+        print(f"  → Relay DOWN queued (GPIO {RELAY_DOWN_PIN})")
         def engage():
+            print(f"    → GPIO {RELAY_DOWN_PIN} HIGH")
             GPIO.output(RELAY_DOWN_PIN, GPIO.HIGH)  # Turn on the relay
 
         def disengage():
+            print(f"    → GPIO {RELAY_DOWN_PIN} LOW")
             GPIO.output(RELAY_DOWN_PIN, GPIO.LOW)  # Turn off the relay
 
         relay_queue.put(engage)  # Add function to queue
         relay_queue.put(disengage)  # Add function to queue
 
     def execute_relay_commands(self):
+        print("Relay command executor thread started")
         while True:
             # Get a function from the queue and execute it
             relay_function = relay_queue.get()
