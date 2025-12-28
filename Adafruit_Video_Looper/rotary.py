@@ -116,12 +116,12 @@ class ChannelSwitcher:
     def relay_channel_up(self):
         print(f"  → Relay UP queued (GPIO {RELAY_UP_PIN})")
         def engage():
-            print(f"    → GPIO {RELAY_UP_PIN} HIGH")
-            GPIO.output(RELAY_UP_PIN, GPIO.HIGH)  # Turn on the relay
+            print(f"    → GPIO {RELAY_UP_PIN} LOW (active-LOW relay)")
+            GPIO.output(RELAY_UP_PIN, GPIO.LOW)  # Turn on the relay (active-LOW)
 
         def disengage():
-            print(f"    → GPIO {RELAY_UP_PIN} LOW")
-            GPIO.output(RELAY_UP_PIN, GPIO.LOW)  # Turn off the relay
+            print(f"    → GPIO {RELAY_UP_PIN} HIGH (active-LOW relay)")
+            GPIO.output(RELAY_UP_PIN, GPIO.HIGH)  # Turn off the relay (active-LOW)
 
         relay_queue.put(engage)  # Add function to queue
         relay_queue.put(disengage)  # Add function to queue
@@ -129,12 +129,12 @@ class ChannelSwitcher:
     def relay_channel_down(self):
         print(f"  → Relay DOWN queued (GPIO {RELAY_DOWN_PIN})")
         def engage():
-            print(f"    → GPIO {RELAY_DOWN_PIN} HIGH")
-            GPIO.output(RELAY_DOWN_PIN, GPIO.HIGH)  # Turn on the relay
+            print(f"    → GPIO {RELAY_DOWN_PIN} LOW (active-LOW relay)")
+            GPIO.output(RELAY_DOWN_PIN, GPIO.LOW)  # Turn on the relay (active-LOW)
 
         def disengage():
-            print(f"    → GPIO {RELAY_DOWN_PIN} LOW")
-            GPIO.output(RELAY_DOWN_PIN, GPIO.LOW)  # Turn off the relay
+            print(f"    → GPIO {RELAY_DOWN_PIN} HIGH (active-LOW relay)")
+            GPIO.output(RELAY_DOWN_PIN, GPIO.HIGH)  # Turn off the relay (active-LOW)
 
         relay_queue.put(engage)  # Add function to queue
         relay_queue.put(disengage)  # Add function to queue
@@ -164,8 +164,9 @@ class ChannelSwitcher:
             return 0  # Return 0 and None if file does not exist
 
     def initialize_relays(self):
-        GPIO.setup(RELAY_UP_PIN, GPIO.OUT, initial=GPIO.LOW)  # Set relay pin as output and start in a low state (relay off)
-        GPIO.setup(RELAY_DOWN_PIN, GPIO.OUT, initial=GPIO.LOW)  # Set relay pin as output and start in a low state (relay off)  
+        # Active-LOW relays: HIGH = off, LOW = on
+        GPIO.setup(RELAY_UP_PIN, GPIO.OUT, initial=GPIO.HIGH)  # Start HIGH (relay off for active-LOW)
+        GPIO.setup(RELAY_DOWN_PIN, GPIO.OUT, initial=GPIO.HIGH)  # Start HIGH (relay off for active-LOW)  
 
 
 if __name__ == "__main__":
