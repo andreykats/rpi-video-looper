@@ -12,10 +12,9 @@ relay_queue = queue.Queue()
 # Rotary encoder's I2C address
 I2C_ADDRESS = 0x8
 
-# GPIO pin for the crelay (modify as needed)
-RELAY_UP_PIN = 17  # Use GPIO 17 (Pin 11) or any other available pin
-RELAY_DOWN_PIN = 27  # Use GPIO 17 (Pin 11) or any other available pin
-RELAY_SOURCE_PIN = 22  # Use GPIO 17 (Pin 11) or any other available pin
+# GPIO pins for relay control (modify as needed)
+RELAY_UP_PIN = 22  # Frequency up relay
+RELAY_DOWN_PIN = 27  # Frequency down relay
 
 # Initialize I2C bus
 bus = smbus.SMBus(1)  # Use bus 1 (check your specific Pi model)
@@ -23,54 +22,18 @@ bus = smbus.SMBus(1)  # Use bus 1 (check your specific Pi model)
 # Set up GPIO for Relays
 GPIO.setmode(GPIO.BCM)  # Use Broadcom pin numbering
 
-# Channel list with rotary encoder position and frequency
-# (channel, rotary_position, modulator frequency)
-CHANNEL_LIST = [
-    (1, 21, None),
-    (1, 22, None),
-    (1, 23, None),
-    (2, 24, None),
-    (2, 25, None),
-    (2, 26, None),
-    (3, 27, None),
-    (3, 28, None),
-    (3, 29, None),
-    (4, 31, None),
-    (4, 32, None),
-    (5, 33, None),
-    (5, 34, None),
-    (5, 35, None),
-    (6, 37, None),
-    (6, 38, None),
-    (6, 39, None),
-    (7, 0, 16),
-    (7, 1, 16),
-    (7, 2, 16),
-    (8, 3, 18),
-    (8, 4, 18),
-    (8, 5, 18),
-    (9, 6, None),
-    (9, 7, None),
-    (9, 8, None),
-    (10, 9, 20),
-    (10, 10, 20),
-    (10, 11, 20),
-    (11, 12, 21),
-    (11, 13, 21),
-    (11, 14, 21),
-    (12, 15, 21),
-    (12, 16, 21),
-    (12, 17, 21),
-    (13, 18, 22),
-    (13, 19, 22),
-    (13, 20, 22)
-]
+# Channel to frequency mapping
+# Arduino sends channel number (0-13) directly via I2C
+# 0 = no position (dead zone), 1-13 = channel numbers
+CHANNEL_FREQUENCY_MAP = {
+    1: None, 2: None, 3: None, 4: None, 5: None, 6: None,
+    7: 16, 8: 18, 9: None, 10: 20, 11: 21, 12: 21, 13: 22
+}
 
 class ChannelSwitcher:
     def __init__(self, on_channel_change=None):
         self.previous_channel = 0
         self.previous_frequency = 0
-        self.current_source = 'composite'
         self.on_channel_change = on_channel_change
 
         # Load previously set frequency from file
@@ -85,89 +48,61 @@ class ChannelSwitcher:
         while True:
             self.change_channel()
 
-    def get_channel_from_position(self, position):
-        for channel, rotary_position, frequency in CHANNEL_LIST:
-            if position == int(rotary_position):
-                return (channel, frequency)
-        return (None, None)
+    def get_channel_and_frequency(self, channel_number):
+        """Get frequency for a channel number (0-13).
+        Returns (channel, frequency) tuple.
+        Channel 0 returns (None, None) to indicate no action."""
+        if channel_number == 0 or channel_number not in CHANNEL_FREQUENCY_MAP:
+            return (None, None)
+        return (channel_number, CHANNEL_FREQUENCY_MAP[channel_number])
+
+    def _tune_to_frequency(self, target_frequency):
+        """Tune to target frequency by pulsing relays."""
+        if target_frequency == self.previous_frequency:
+            return
+
+        if target_frequency > self.previous_frequency:
+            # Frequency UP
+            pulses = target_frequency - self.previous_frequency
+            for _ in range(pulses):
+                self.relay_channel_up()
+        else:
+            # Frequency DOWN
+            pulses = self.previous_frequency - target_frequency
+            for _ in range(pulses):
+                self.relay_channel_down()
+
+        self.previous_frequency = target_frequency
+        self.save_previous_values(target_frequency)
 
     def change_channel(self):
-        # Read the rotary encoder position
-        rotary_position = self.read_remote_rotary_encoder()
-        # Get coresponding channel
-        channel, frequency = self.get_channel_from_position(rotary_position)
+        # Read channel number from Arduino (0-13)
+        channel_number = self.read_remote_rotary_encoder()
 
-        # Print the angle (for debugging)
-        # print(f"Encoder Position: {rotary_position}, Channel: {channel}, Frequency: {frequency}")
+        # Get frequency for this channel
+        channel, frequency = self.get_channel_and_frequency(channel_number)
 
-        # If the channel has changed, send change channel command
-        # global previous_channel
-        # global previous_frequency
-        # global previous_source
-
+        # Channel 0 or invalid = do nothing
         if channel is None:
             return None
 
-        if channel != self.previous_channel:
-            if channel > self.previous_channel:
-                # print(f"Channel UP: {channel}")
-                if frequency is not None:
-                    # Call the callback if it's provided
-                    if self.on_channel_change is not None:
-                        if frequency != self.previous_frequency:
-                            self.on_channel_change(channel, "up")
+        # Only act if channel has changed
+        if channel == self.previous_channel:
+            return None
 
-                    # print(f"Switching to frequency: {frequency}")
-                    if frequency is not None and frequency < self.previous_frequency:
-                        for _ in range(self.previous_frequency - frequency):
-                            self.relay_channel_down()
-                    else:
-                        for _ in range(frequency - self.previous_frequency):
-                            self.relay_channel_up()
+        # Handle relay tuning if frequency is specified
+        if frequency is not None:
+            self._tune_to_frequency(frequency)
 
-                    self.previous_frequency = frequency
-                    self.save_previous_values(self.previous_frequency)
+        # Call callback with both current and previous channel
+        if self.on_channel_change is not None:
+            self.on_channel_change(channel, self.previous_channel)
 
-            elif channel < self.previous_channel:
-                # print(f"Channel DOWN: {channel}")
-                if frequency is not None:
-                    # Call the callback if it's provided
-                    if self.on_channel_change is not None:
-                        if frequency != self.previous_frequency:
-                            self.on_channel_change(channel, "down")
-
-                    # print(f"Switching to frequency: {frequency}")
-                    if frequency > self.previous_frequency:
-                        for _ in range(frequency - self.previous_frequency):
-                            self.relay_channel_up()
-                    else:
-                        for _ in range(self.previous_frequency - frequency):
-                            self.relay_channel_down()
-
-                    self.previous_frequency = frequency
-                    self.save_previous_values(self.previous_frequency)
-
-            if channel is 13:
-                if self.current_source != 'hdmi':
-                    self.relay_source_hdmi()
-            else:
-                if self.current_source != 'composite':
-                    self.relay_source_composite()
-
-            self.previous_channel = channel
+        # Update state
+        self.previous_channel = channel
 
     def read_remote_rotary_encoder(self):
         return int(bus.read_byte(I2C_ADDRESS))
-
-    def relay_source_hdmi(self):
-        print("Switching to HDMI")
-        GPIO.output(RELAY_SOURCE_PIN, GPIO.LOW) 
-        self.current_source = 'hdmi'
-
-    def relay_source_composite(self):
-        print("Switching to Composite")
-        GPIO.output(RELAY_SOURCE_PIN, GPIO.HIGH) 
-        self.current_source = 'composite'
 
     def relay_channel_up(self):
         def engage():
@@ -214,12 +149,7 @@ class ChannelSwitcher:
 
     def initialize_relays(self):
         GPIO.setup(RELAY_UP_PIN, GPIO.OUT, initial=GPIO.LOW)  # Set relay pin as output and start in a low state (relay off)
-        GPIO.setup(RELAY_DOWN_PIN, GPIO.OUT, initial=GPIO.LOW)  # Set relay pin as output and start in a low state (relay off)
-
-        if self.current_source == 'composite':
-            GPIO.setup(RELAY_SOURCE_PIN, GPIO.OUT, initial=GPIO.LOW)  
-        else:
-            GPIO.setup(RELAY_SOURCE_PIN, GPIO.OUT, initial=GPIO.HIGH)  
+        GPIO.setup(RELAY_DOWN_PIN, GPIO.OUT, initial=GPIO.LOW)  # Set relay pin as output and start in a low state (relay off)  
 
 
 if __name__ == "__main__":

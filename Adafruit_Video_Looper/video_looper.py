@@ -429,18 +429,28 @@ class VideoLooper:
             cmd.extend(('set', self._alsa_hw_vol_control, '--', self._alsa_hw_vol))
             subprocess.check_call(cmd)
 
-    def _handle_rotary_channel_switcher(self, channel, direction):
-        if self._running and direction == 'up':
-            print(f"going UP to channel: {channel}")
-            self._playlist.seek(1)
-            self._player.stop(3)
-            self._playbackStopped = False
+    def _handle_rotary_channel_switcher(self, channel, previous_channel):
+        """Handle rotary encoder channel changes.
+        Args:
+            channel: New channel number (1-13)
+            previous_channel: Previous channel number
+        """
+        if not self._running:
+            return
 
-        elif self._running and direction == 'down':
-            print(f"going DOWN to channel: {channel}")
-            self._playlist.seek(-1)
-            self._player.stop(3)
-            self._playbackStopped = False       
+        # Direct mapping: Channel N → Video N-1 (0-indexed playlist)
+        video_index = channel - 1
+
+        # Validate index is within playlist bounds
+        if video_index < 0 or video_index >= self._playlist.length():
+            print(f"Channel {channel} out of range (playlist has {self._playlist.length()} videos)")
+            return
+
+        # Jump directly to the video
+        print(f"Switching from channel {previous_channel} to {channel} (video index {video_index})")
+        self._playlist.set_next(video_index)
+        self._player.stop(3)
+        self._playbackStopped = False       
 
     def _handle_keyboard_shortcuts(self):
         while self._running:
