@@ -10,13 +10,14 @@ random.seed()
 class Movie:
     """Representation of a movie"""
 
-    def __init__(self, target:str , title: Optional[str] = None, repeats: int = 1):
+    def __init__(self, target:str , title: Optional[str] = None, repeats: int = 1, duration: float = 0):
         """Create a playlist from the provided list of movies."""
         self.target = target
         self.filename = basename(target)
         self.title = title
         self.repeats = int(repeats)
         self.playcount = 0
+        self.duration = float(duration)  # Duration in seconds for broadcast mode
 
     def was_played(self):
         if self.repeats > 1:
@@ -30,7 +31,11 @@ class Movie:
         
     def finish_playing(self):
         self.playcount = self.repeats+1
-    
+
+    def has_duration(self):
+        """Check if duration has been set."""
+        return self.duration > 0
+
     def __lt__(self, other):
         return self.target < other.target
 
@@ -127,3 +132,73 @@ class Playlist:
     def clear_all_playcounts(self):
         for movie in self._movies:
             movie.clear_playcount()
+
+
+class BroadcastChannelManager:
+    """Manages broadcast TV-style channels with synchronized playback."""
+
+    def __init__(self, broadcast_start_time, num_channels=13):
+        self._channel_playlists = {}  # Dict: channel_num -> Playlist
+        self._channel_durations = {}  # Dict: channel_num -> total_duration
+        self._broadcast_start_time = broadcast_start_time  # time.time() when app started
+        self._default_playlist = None
+
+    def set_channel_playlist(self, channel_num, playlist):
+        """Associate a playlist with a channel number (1-13)."""
+        self._channel_playlists[channel_num] = playlist
+        # Calculate total duration for this channel
+        total_duration = sum(movie.duration for movie in playlist._movies)
+        self._channel_durations[channel_num] = total_duration
+
+    def set_default_playlist(self, playlist):
+        """Set playlist to use for empty/missing channels."""
+        self._default_playlist = playlist
+
+    def get_playlist(self, channel_num):
+        """Get playlist for channel, or default if empty/missing."""
+        if channel_num in self._channel_playlists:
+            playlist = self._channel_playlists[channel_num]
+            if playlist.length() > 0:
+                return playlist
+        return self._default_playlist if self._default_playlist else Playlist([])
+
+    def calculate_broadcast_position(self, channel_num):
+        """Calculate what should be playing on this channel at current broadcast time.
+
+        Returns:
+            (movie, seek_offset) tuple, or (None, 0) if channel empty
+        """
+        import time
+
+        playlist = self.get_playlist(channel_num)
+        if playlist.length() == 0:
+            return (None, 0)
+
+        # Get elapsed broadcast time
+        broadcast_time = time.time() - self._broadcast_start_time
+
+        # Get total loop duration for this channel
+        total_duration = self._channel_durations.get(channel_num, 0)
+        if total_duration == 0:
+            # Fallback if durations not set
+            return (playlist._movies[0], 0)
+
+        # Calculate position within the loop
+        position_in_loop = broadcast_time % total_duration
+
+        # Find which video contains this position
+        cumulative_time = 0
+        for movie in playlist._movies:
+            if cumulative_time + movie.duration > position_in_loop:
+                # Found the video!
+                seek_offset = position_in_loop - cumulative_time
+                return (movie, seek_offset)
+            cumulative_time += movie.duration
+
+        # Fallback (shouldn't reach here)
+        return (playlist._movies[0], 0)
+
+    def has_channel(self, channel_num):
+        """Check if channel has videos."""
+        return (channel_num in self._channel_playlists and
+                self._channel_playlists[channel_num].length() > 0)

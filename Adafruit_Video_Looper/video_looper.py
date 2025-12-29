@@ -90,6 +90,11 @@ class VideoLooper:
         self._player = self._load_player()
         self._reader = self._load_file_reader()
         self._playlist = None
+        # Broadcast TV mode variables
+        import time
+        self._broadcast_manager = None          # BroadcastChannelManager instance
+        self._current_channel = 1               # Currently active channel (1-13)
+        self._broadcast_start_time = time.time()  # When broadcast started
         # Load ALSA hardware configuration.
         self._alsa_hw_device = parse_hw_device(self._config.get('alsa', 'hw_device'))
         self._alsa_hw_vol_control = self._config.get('alsa', 'hw_vol_control')
@@ -190,9 +195,21 @@ class VideoLooper:
             return False
 
     def _build_playlist(self):
-        """Try to build a playlist (object) from a playlist (file).
-        Falls back to an auto-generated playlist with all files.
+        """Build the playlist of movies to play.
+
+        Tries broadcast channel mode first (if channel folders exist),
+        then playlist files, then falls back to auto-generated playlist with all files.
         """
+        # Try broadcast channel/folder mode first
+        self._broadcast_manager = self._build_broadcast_channels()
+
+        if self._broadcast_manager is not None:
+            # Broadcast mode: Don't return a playlist, we'll use broadcast manager
+            self._print("Using broadcast TV mode (time-synchronized channels)")
+            self._current_channel = 1
+            return None  # Signal to use broadcast mode
+
+        # Not in broadcast mode, try playlist files
         if self._config.has_option('playlist', 'path'):
             playlist_path = self._config.get('playlist', 'path')
             if playlist_path != "":
@@ -272,6 +289,154 @@ class VideoLooper:
                             self._sound_vol = int(float(sound_vol_string))
         # Create a playlist with the sorted list of movies.
         return Playlist(sorted(movies))
+
+    def _get_video_duration(self, video_path):
+        """Extract video duration in seconds using ffprobe.
+
+        Args:
+            video_path: Full path to video file
+
+        Returns:
+            float: Duration in seconds, or 0 if unable to determine
+        """
+        import subprocess
+        import json
+
+        try:
+            result = subprocess.run(
+                ['ffprobe', '-v', 'quiet', '-print_format', 'json',
+                 '-show_format', video_path],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+
+            if result.returncode == 0:
+                data = json.loads(result.stdout)
+                duration = float(data['format']['duration'])
+                return duration
+        except (subprocess.TimeoutExpired, KeyError, ValueError, FileNotFoundError) as e:
+            self._print(f"Warning: Could not extract duration for {video_path}: {e}")
+
+        # Fallback: Try to parse from filename (HH-MM-SS format)
+        return self._parse_duration_from_filename(os.path.basename(video_path))
+
+    def _parse_duration_from_filename(self, filename):
+        """Parse duration from filename format: HH-MM-SS_Name.mp4
+
+        Args:
+            filename: Filename to parse
+
+        Returns:
+            float: Duration in seconds, or 0 if not parseable
+        """
+        import re
+
+        match = re.match(r'(\d{2})-(\d{2})-(\d{2})_', filename)
+        if match:
+            hours = int(match.group(1))
+            minutes = int(match.group(2))
+            seconds = int(match.group(3))
+            return hours * 3600 + minutes * 60 + seconds
+        return 0
+
+    def _get_movies_from_path(self, path):
+        """Extract movies from a single directory path WITH duration extraction.
+
+        Refactored from _build_playlist_from_all_files() to be reusable
+        for each channel folder. Now includes duration extraction.
+
+        Args:
+            path: Path to directory containing videos
+
+        Returns:
+            list: List of Movie objects with durations
+        """
+        movies = []
+
+        if not os.path.exists(path) or not os.path.isdir(path):
+            return movies
+
+        for x in os.listdir(path):
+            # Ignore hidden files
+            if x[0] != '.' and re.search('\.({0})$'.format(self._extensions), x, flags=re.IGNORECASE):
+                repeatsetting = re.search('_repeat_([0-9]*)x', x, flags=re.IGNORECASE)
+                repeat = repeatsetting.group(1) if repeatsetting else 1
+                basename, extension = os.path.splitext(x)
+
+                video_path = '{0}/{1}'.format(path.rstrip('/'), x)
+
+                # Extract duration for broadcast calculations
+                duration = self._get_video_duration(video_path)
+
+                # Create Movie with duration
+                movie = Movie(video_path, basename, repeat, duration)
+                movies.append(movie)
+
+                if duration > 0:
+                    self._print(f"  {x}: {int(duration)}s")
+                else:
+                    self._print(f"  {x}: duration unknown (will use 0)")
+
+        # Handle volume files (copy logic from _build_playlist_from_all_files)
+        if self._alsa_hw_vol_file:
+            alsa_hw_vol_file_path = '{0}/{1}'.format(path.rstrip('/'), self._alsa_hw_vol_file)
+            if os.path.exists(alsa_hw_vol_file_path):
+                with open(alsa_hw_vol_file_path, 'r') as f:
+                    self._alsa_hw_vol = f.readline()
+
+        if self._sound_vol_file:
+            sound_vol_file_path = '{0}/{1}'.format(path.rstrip('/'), self._sound_vol_file)
+            if os.path.exists(sound_vol_file_path):
+                with open(sound_vol_file_path, 'r') as f:
+                    sound_vol_string = f.readline()
+                    if self._is_number(sound_vol_string):
+                        self._sound_vol = int(float(sound_vol_string))
+
+        return movies
+
+    def _build_broadcast_channels(self):
+        """Build broadcast TV-style channels with synchronized playback.
+
+        Returns:
+            BroadcastChannelManager with playlists and durations for all channels.
+        """
+        import time
+        from .model import BroadcastChannelManager, Playlist
+
+        # Get channel-specific paths from file reader
+        if not hasattr(self._reader, 'search_channel_paths'):
+            # Fallback to old behavior if reader doesn't support channels
+            self._print("Channel mode not supported by file reader, using legacy mode")
+            return None
+
+        channel_paths = self._reader.search_channel_paths()
+
+        if len(channel_paths) == 0:
+            self._print("No channel folders found on USB drive")
+            return None
+
+        manager = BroadcastChannelManager(self._broadcast_start_time)
+
+        self._print("Building broadcast channels (extracting video durations)...")
+
+        # Build playlist for each channel
+        for channel_num in range(1, 14):
+            if channel_num in channel_paths:
+                self._print(f"Channel {channel_num}:")
+                movies = self._get_movies_from_path(channel_paths[channel_num])
+                playlist = Playlist(sorted(movies))
+                manager.set_channel_playlist(channel_num, playlist)
+
+                total_duration = sum(m.duration for m in movies)
+                self._print(f"  Total: {len(movies)} videos, {int(total_duration)}s loop")
+            # Channels without folders automatically use default
+
+        # Create default playlist for empty channels (empty playlist = idle message)
+        default_playlist = Playlist([])
+        manager.set_default_playlist(default_playlist)
+
+        return manager
 
     def _blank_screen(self):
         """Render a blank screen filled with the background color and optional the background image."""
@@ -430,7 +595,13 @@ class VideoLooper:
             subprocess.check_call(cmd)
 
     def _handle_rotary_channel_switcher(self, channel, previous_channel):
-        """Handle rotary encoder channel changes.
+        """Handle rotary encoder channel changes with broadcast TV behavior.
+
+        In broadcast mode: Calculates what should be playing on the target channel
+        at the current broadcast time and seeks to that position.
+
+        In legacy mode: Jumps to video index like before.
+
         Args:
             channel: New channel number (1-13)
             previous_channel: Previous channel number
@@ -438,19 +609,48 @@ class VideoLooper:
         if not self._running:
             return
 
-        # Direct mapping: Channel N → Video N-1 (0-indexed playlist)
-        video_index = channel - 1
-
-        # Validate index is within playlist bounds
-        if video_index < 0 or video_index >= self._playlist.length():
-            print(f"Channel {channel} out of range (playlist has {self._playlist.length()} videos)")
+        # Validate channel number
+        if channel < 1 or channel > 13:
+            self._print(f"Channel {channel} out of range (1-13)")
             return
 
-        # Jump directly to the video
-        print(f"Switching from channel {previous_channel} to {channel} (video index {video_index})")
-        self._playlist.set_next(video_index)
+        self._print(f"Switching from channel {previous_channel} to {channel}")
+
+        # Stop current playback
         self._player.stop(3)
-        self._playbackStopped = False       
+
+        # Check if using broadcast mode or legacy mode
+        if self._broadcast_manager is not None:
+            # BROADCAST MODE: Calculate what should be playing now
+            self._current_channel = channel
+
+            movie, seek_offset = self._broadcast_manager.calculate_broadcast_position(channel)
+
+            if movie is None:
+                self._print(f"Channel {channel} is empty")
+                self._playbackStopped = True
+                return
+
+            # Convert seek_offset to HH:MM:SS format for OMXPlayer
+            hours = int(seek_offset // 3600)
+            minutes = int((seek_offset % 3600) // 60)
+            seconds = int(seek_offset % 60)
+            seek_time_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+            self._print(f"Channel {channel}: Playing {movie.filename} @ {seek_time_str}")
+
+            # Play video with seek position
+            self._player.play(movie, vol=self._sound_vol, seek_position=seek_offset)
+            self._playbackStopped = False
+
+        else:
+            # LEGACY MODE: jump to video index (old behavior)
+            video_index = channel - 1
+            if video_index < 0 or video_index >= self._playlist.length():
+                self._print(f"Channel {channel} out of range")
+                return
+            self._playlist.set_next(video_index)
+            self._playbackStopped = False       
 
     def _handle_keyboard_shortcuts(self):
         while self._running:
@@ -518,12 +718,26 @@ class VideoLooper:
 
         
     def run(self):
-        """Main program loop.  Will never return!"""
+        """Main program loop with broadcast TV support. Will never return!"""
         # Get playlist of movies to play from file reader.
         self._playlist = self._build_playlist()
-        self._prepare_to_run_playlist(self._playlist)
-        self._set_hardware_volume()
-        movie = self._playlist.get_next(self._is_random, self._resume_playlist)
+
+        # Check if in broadcast mode or legacy mode
+        if self._broadcast_manager is not None:
+            # BROADCAST MODE
+            self._print("Starting broadcast TV mode")
+            # No playlist to prepare, set volume
+            self._set_hardware_volume()
+
+            # Get initial movie for channel 1 at current broadcast time
+            movie, seek_offset = self._broadcast_manager.calculate_broadcast_position(1)
+        else:
+            # LEGACY MODE
+            self._prepare_to_run_playlist(self._playlist)
+            self._set_hardware_volume()
+            movie = self._playlist.get_next(self._is_random, self._resume_playlist)
+            seek_offset = None
+
         # Main loop to play videos in the playlist and listen for file changes.
 
         # Start rotary encoder channel switcher thread after our playlist has been created
@@ -534,15 +748,24 @@ class VideoLooper:
             if not self._player.is_playing() and not self._playbackStopped:
                 if movie is not None: #just to avoid errors
 
-                    if movie.playcount >= movie.repeats:
-                        movie.clear_playcount()
-                        movie = self._playlist.get_next(self._is_random, self._resume_playlist)
-                    elif self._player.can_loop_count() and movie.playcount > 0:
-                        movie.clear_playcount()
-                        movie = self._playlist.get_next(self._is_random, self._resume_playlist)
+                    # Check mode for getting next movie
+                    if self._broadcast_manager is not None:
+                        # BROADCAST MODE: Recalculate position for current channel
+                        movie, seek_offset = self._broadcast_manager.calculate_broadcast_position(
+                            self._current_channel
+                        )
+                    else:
+                        # LEGACY MODE: Use playlist
+                        seek_offset = None
+                        if movie.playcount >= movie.repeats:
+                            movie.clear_playcount()
+                            movie = self._playlist.get_next(self._is_random, self._resume_playlist)
+                        elif self._player.can_loop_count() and movie.playcount > 0:
+                            movie.clear_playcount()
+                            movie = self._playlist.get_next(self._is_random, self._resume_playlist)
 
-                    # Commented this out so the video restarts after finishing
-                    # movie.was_played()
+                        # Commented this out so the video restarts after finishing
+                        # movie.was_played()
 
                     if self._wait_time > 0 and not self._firstStart:
                         if(self._datetime_display):
@@ -552,37 +775,62 @@ class VideoLooper:
                             time.sleep(self._wait_time)
                     self._firstStart = False
 
-                    #generating infotext
-                    if self._player.can_loop_count():
+                    # Generating infotext
+                    if self._broadcast_manager is not None:
+                        # Broadcast mode info
+                        infotext = f'(Channel {self._current_channel}, broadcast mode)'
+                    elif self._player.can_loop_count():
                         infotext = '{0} time{1} (player counts loops)'.format(movie.repeats, "s" if movie.repeats>1 else "")
                     else:
                         infotext = '{0}/{1}'.format(movie.playcount, movie.repeats)
-                    if self._playlist.length()==1:
+                    if self._playlist and self._playlist.length()==1:
                         infotext = '(endless loop)'
 
                     if self._one_shot_playback:
                         self._playbackStopped = True
 
-                    # Start playing the first available movie.
+                    # Start playing the movie
                     self._print('Playing movie: {0} {1}'.format(movie, infotext))
                     # todo: maybe clear screen to black so that background (image/color) is not visible for videos with a resolution that is < screen resolution
-                    self._player.play(movie, loop=-1 if self._playlist.length()==1 else None, vol = self._sound_vol)
+
+                    # Play with seek position if in broadcast mode
+                    if self._broadcast_manager is not None:
+                        self._player.play(movie, vol=self._sound_vol, seek_position=seek_offset)
+                    else:
+                        self._player.play(movie, loop=-1 if self._playlist.length()==1 else None, vol=self._sound_vol)
 
             # Check for changes in the file search path (like USB drives added)
             # and rebuild the playlist.
             if self._reader.is_changed() and not self._playbackStopped:
                 self._print("reader changed, stopping player")
-                self._player.stop(3)  # Up to 3 second delay waiting for old 
+                self._player.stop(3)  # Up to 3 second delay waiting for old
                                       # player to stop.
                 self._print("player stopped")
-                # Rebuild playlist and show countdown again (if OSD enabled).
+
+                # Reset broadcast start time for new content
+                import time
+                self._broadcast_start_time = time.time()
+
+                # Rebuild playlist/broadcast manager and show countdown again (if OSD enabled).
                 self._playlist = self._build_playlist()
+
                 #refresh background image
                 if self._copyloader:
                     self._bgimage = self._load_bgimage()
-                self._prepare_to_run_playlist(self._playlist)
-                self._set_hardware_volume()
-                movie = self._playlist.get_next(self._is_random, self._resume_playlist)
+
+                # Check mode
+                if self._broadcast_manager is not None:
+                    # Broadcast mode: Get movie for current channel at current broadcast time
+                    self._set_hardware_volume()
+                    movie, seek_offset = self._broadcast_manager.calculate_broadcast_position(
+                        self._current_channel
+                    )
+                else:
+                    # Legacy mode
+                    self._prepare_to_run_playlist(self._playlist)
+                    self._set_hardware_volume()
+                    movie = self._playlist.get_next(self._is_random, self._resume_playlist)
+                    seek_offset = None
 
             # Give the CPU some time to do other tasks. low values increase "responsiveness to changes" and reduce the pause between files
             # but increase CPU usage

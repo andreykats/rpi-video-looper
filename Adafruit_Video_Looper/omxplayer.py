@@ -64,26 +64,39 @@ class OMXPlayer:
         # return length in seconds
         return hours * 3600 + minutes * 60 + seconds
 
-    def assemble_args(self, movie, loop=None, vol=0):
-        """Assemble the list of arguments for the omxplayer command."""
+    def assemble_args(self, movie, loop=None, vol=0, seek_position=None):
+        """Assemble the list of arguments for the omxplayer command.
+
+        Args:
+            movie: Movie object to play
+            loop: Loop count (-1 for infinite)
+            vol: Volume level
+            seek_position: Seek to this position in seconds (for broadcast mode)
+        """
         # Assemble list of arguments.
         args = ['omxplayer']
         args.extend(['-o', self._sound])  # Add sound arguments.
 
-        # Get the length of the video in seconds
-        video_length_in_seconds = self.extract_video_length(movie)
+        # Determine seek position
+        if seek_position is not None:
+            # Broadcast mode: Use provided seek position
+            elapsed_time_in_seconds = seek_position
+        else:
+            # Legacy mode: Calculate from elapsed time
+            # Get the length of the video in seconds
+            video_length_in_seconds = self.extract_video_length(movie)
 
-        # Get the elapsed playback time in seconds
-        elapsed_time_in_seconds = self.get_elapsed_time_in_seconds()
+            # Get the elapsed playback time in seconds
+            elapsed_time_in_seconds = self.get_elapsed_time_in_seconds()
 
-        # If the elapsed time is longer than the video length, calculate the remainder
-        if elapsed_time_in_seconds >= video_length_in_seconds:
-            elapsed_time_in_seconds = elapsed_time_in_seconds % video_length_in_seconds
+            # If the elapsed time is longer than the video length, calculate the remainder
+            if elapsed_time_in_seconds >= video_length_in_seconds:
+                elapsed_time_in_seconds = elapsed_time_in_seconds % video_length_in_seconds
 
         # Convert the elapsed time to 00:00:00 format
         hours, remainder = divmod(elapsed_time_in_seconds, 3600)
         minutes, seconds = divmod(remainder, 60)
-        elapsed_time = '{:02}:{:02}:{:02}'.format(hours, minutes, seconds)
+        elapsed_time = '{:02}:{:02}:{:02}'.format(int(hours), int(minutes), int(seconds))
 
         args.extend(['-l', elapsed_time])  # Add starting position.
         args.extend(['--aspect-mode', 'stretch']) # Fill the screen with the video
@@ -103,10 +116,17 @@ class OMXPlayer:
         args.append(movie.target)       # Add movie file path.
         return args
     
-    def play(self, movie, loop=None, vol=0):
-        """Play the provided movie file, optionally looping it repeatedly."""
+    def play(self, movie, loop=None, vol=0, seek_position=None):
+        """Play the provided movie file, optionally looping it repeatedly.
+
+        Args:
+            movie: Movie object to play
+            loop: Loop count (-1 for infinite)
+            vol: Volume level
+            seek_position: Seek to this position in seconds (for broadcast mode)
+        """
         self.stop(3)  # Up to 3 second delay to let the old player stop.
-        args = self.assemble_args(movie, loop, vol)
+        args = self.assemble_args(movie, loop, vol, seek_position)
         # Run omxplayer process and direct standard output to /dev/null.
         # Establish input pipe for commands
         self._process = subprocess.Popen(args,

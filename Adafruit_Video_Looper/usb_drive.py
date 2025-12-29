@@ -30,6 +30,28 @@ class USBDriveReader:
         self._mounter.mount_all()
         return glob.glob(self._mount_path + '*')
 
+    def search_channel_paths(self):
+        """Return dict mapping channel numbers to their folder paths.
+
+        Returns:
+            dict: {1: '/mnt/usbdrive0/1', 2: '/mnt/usbdrive0/2', ...}
+            Only includes channels that exist on USB drive.
+        """
+        import os
+
+        self._mounter.mount_all()
+        usb_drives = glob.glob(self._mount_path + '*')
+
+        channel_paths = {}
+        for drive in usb_drives:
+            # Search for channel folders 1-13
+            for channel_num in range(1, 14):
+                channel_path = os.path.join(drive, str(channel_num))
+                if os.path.exists(channel_path) and os.path.isdir(channel_path):
+                    channel_paths[channel_num] = channel_path
+
+        return channel_paths
+
     def is_changed(self):
         """Return true if the file search paths have changed, like when a new
         USB drive is inserted.
