@@ -91,7 +91,6 @@ class VideoLooper:
         self._reader = self._load_file_reader()
         self._playlist = None
         # Broadcast TV mode variables
-        import time
         self._broadcast_manager = None          # BroadcastChannelManager instance
         self._current_channel = 1               # Currently active channel (1-13)
         self._broadcast_start_time = time.time()  # When broadcast started
@@ -808,7 +807,6 @@ class VideoLooper:
                 self._print("player stopped")
 
                 # Reset broadcast start time for new content
-                import time
                 self._broadcast_start_time = time.time()
 
                 # Rebuild playlist/broadcast manager and show countdown again (if OSD enabled).
