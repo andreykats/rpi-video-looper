@@ -27,8 +27,19 @@ GPIO.setwarnings(False)  # Disable warnings if pins are already in use
 # Arduino sends channel number (0-13) directly via I2C
 # 0 = no position (dead zone), 1-13 = channel numbers
 CHANNEL_FREQUENCY_MAP = {
-    1: None, 2: None, 3: None, 4: None, 5: None, 6: None,
-    7: 16, 8: 18, 9: None, 10: 20, 11: 21, 12: 21, 13: 22
+    1: None, 
+    2: None, 
+    3: None, 
+    4: None, 
+    5: None, 
+    6: None,
+    7: 16, 
+    8: 18, 
+    9: None, 
+    10: 20, 
+    11: 21, 
+    12: 21, 
+    13: 22
 }
 
 class ChannelSwitcher:
