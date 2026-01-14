@@ -176,8 +176,8 @@ class ChannelSwitcher:
 
     def initialize_relays(self):
         # Active-LOW relays: HIGH = off, LOW = on
-        GPIO.setup(RELAY_UP_PIN, GPIO.OUT, initial=GPIO.HIGH)  # Start HIGH (relay off for active-LOW)
-        GPIO.setup(RELAY_DOWN_PIN, GPIO.OUT, initial=GPIO.HIGH)  # Start HIGH (relay off for active-LOW)  
+        GPIO.setup(RELAY_UP_PIN, GPIO.OUT, initial=GPIO.LOW)  # Start HIGH (relay off for active-LOW)
+        GPIO.setup(RELAY_DOWN_PIN, GPIO.OUT, initial=GPIO.LOW)  # Start HIGH (relay off for active-LOW)  
 
 
 if __name__ == "__main__":
