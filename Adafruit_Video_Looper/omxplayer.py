@@ -151,7 +151,7 @@ class OMXPlayer:
         process.poll()
         return process.returncode is None
 
-    def stop(self, block_timeout_sec=0):
+    def stop(self):
         """Stop the video player. Kill commands are non-blocking for faster
         channel switching.
         """

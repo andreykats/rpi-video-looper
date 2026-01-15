@@ -208,6 +208,11 @@ class ChannelSwitcher:
         for _ in range(pulses):
             self.relay_band_press()
 
+        # Reset tracked frequency to band's starting position
+        # (hardware resets to start when switching bands)
+        band_start_frequencies = {1: 2, 2: 16}
+        self.frequency_by_band[target_band] = band_start_frequencies[target_band]
+
         self.previous_band = target_band
         self.save_previous_values()
 
