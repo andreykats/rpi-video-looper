@@ -182,17 +182,17 @@ class ChannelSwitcher:
 
     def _switch_to_band(self, target_band):
         """Switch to target band by pulsing the band relay.
-        The modulator has 4 bands that cycle: 1 → 2 → 3 → 4 → 1..."""
+        The modulator has 5 bands that cycle: 1 → 2 → 3 → 4 → 5 → 1..."""
         if target_band == self.previous_band:
             print(f"Already at band {target_band}, skipping band relay pulses")
             return
 
-        # Calculate pulses needed to get from current band to target band (cycling through 4 bands)
+        # Calculate pulses needed to get from current band to target band (cycling through 5 bands)
         if target_band > self.previous_band:
             pulses = target_band - self.previous_band
         else:
-            # Wrap around: e.g., from band 2 to band 1 = 4 - 2 + 1 = 3 pulses
-            pulses = 4 - self.previous_band + target_band
+            # Wrap around: e.g., from band 2 to band 1 = 5 - 2 + 1 = 4 pulses
+            pulses = 5 - self.previous_band + target_band
 
         print(f"Switching from band {self.previous_band} to band {target_band} ({pulses} pulses)")
         for _ in range(pulses):
