@@ -158,16 +158,19 @@ class OMXPlayer:
 
         # Stop the player if it's running.
         if process is not None and process.returncode is None:
-            # There are a couple processes used by omxplayer, so kill both
-            # with a pkill command.
-            subprocess.call(['pkill', '-9', 'omxplayer'])
+            # Send quit command to omxplayer via stdin (graceful shutdown)
+            try:
+                process.stdin.write(b'q')
+                process.stdin.flush()
+            except:
+                pass
 
-            # Wait for THIS specific process to actually terminate
+            # Wait for the process to actually terminate
             if block_timeout_sec > 0:
                 try:
                     process.wait(timeout=block_timeout_sec)
                 except subprocess.TimeoutExpired:
-                    # Process didn't die, try to kill it directly
+                    # Graceful quit didn't work, force kill as fallback
                     try:
                         process.kill()
                         process.wait(timeout=1)
