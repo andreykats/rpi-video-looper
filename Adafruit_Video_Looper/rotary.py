@@ -50,12 +50,17 @@ class ChannelSwitcher:
         self.previous_channel = 0
         self.previous_band = 1  # Default to band 1
         # Track frequency per band (each band has independent RF frequency range)
-        # Band 1: RF 2-6, Band 2: RF 16-22
-        self.frequency_by_band = {1: 2, 2: 16}  # Default to lowest frequency per band
+        # Band 1: RF 2-6, Band 2: RF 7-13 (hardware internal), maps to RF 16-22
+        self.frequency_by_band = {1: 2, 2: 7}  # Default to starting frequency per band
         self.on_channel_change = on_channel_change
 
         # Load previously set frequencies and band from file
         self.frequency_by_band, self.previous_band = self.load_previous_values()
+
+        # Track which bands we've visited this session (hardware remembers per-band frequency)
+        # Start with previous_band since we're already on it
+        self.visited_bands = {self.previous_band}
+
         print(f"ChannelSwitcher initialized: frequency_by_band = {self.frequency_by_band}, previous_band = {self.previous_band}")
 
         self.initialize_relays()
@@ -215,10 +220,15 @@ class ChannelSwitcher:
             print("    → Band settle delay complete")
         relay_queue.put(band_settle_delay)
 
-        # Reset tracked frequency to band's starting position
-        # (hardware resets to start when switching bands)
-        band_start_frequencies = {1: 2, 2: 16}
-        self.frequency_by_band[target_band] = band_start_frequencies[target_band]
+        # Only reset frequency on FIRST entry to a band (hardware remembers per-band)
+        if target_band not in self.visited_bands:
+            # First entry - hardware is at band's starting position
+            band_start_frequencies = {1: 2, 2: 7}  # Band 2 starts at 7, not 16
+            self.frequency_by_band[target_band] = band_start_frequencies[target_band]
+            self.visited_bands.add(target_band)
+            print(f"First entry to band {target_band}, reset frequency to {band_start_frequencies[target_band]}")
+        else:
+            print(f"Returning to band {target_band}, hardware remembers frequency {self.frequency_by_band[target_band]}")
 
         self.previous_band = target_band
         self.save_previous_values()
@@ -242,7 +252,7 @@ class ChannelSwitcher:
     def load_previous_values(self):
         """Load frequency_by_band and previous_band from a file.
         Returns (frequency_by_band dict, band) tuple."""
-        default_frequencies = {1: 2, 2: 16}  # Default to lowest frequency per band
+        default_frequencies = {1: 2, 2: 7}  # Default to starting frequency per band
         try:
             with open('previous_values.pkl', 'rb') as f:
                 data = pickle.load(f)
