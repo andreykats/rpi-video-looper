@@ -154,7 +154,13 @@ class ChannelSwitcher:
         self.previous_channel = channel
 
     def read_remote_rotary_encoder(self):
-        return int(bus.read_byte(I2C_ADDRESS))
+        try:
+            return int(bus.read_byte(I2C_ADDRESS))
+        except (TimeoutError, OSError):
+            # I2C read failed - return previous channel to maintain state
+            # Small delay to avoid busy-loop on persistent errors
+            time.sleep(0.1)
+            return self.previous_channel
 
     def relay_channel_up(self):
         print(f"  → Relay UP queued (GPIO {RELAY_UP_PIN})")
