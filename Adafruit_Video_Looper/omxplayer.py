@@ -155,11 +155,7 @@ class OMXPlayer:
         """
         # Kill ALL omxplayer processes system-wide (omxplayer spawns child processes)
         subprocess.call(['pkill', '-9', 'omxplayer'])
-        subprocess.call(['pkill', '-9', 'omxplayer.bin'])
-
-        # Give the system time to clean up the killed processes
-        # if block_timeout_sec > 0:
-        #     time.sleep(0.5)
+        # subprocess.call(['pkill', '-9', 'omxplayer.bin'])
 
         # Let the process reference be garbage collected.
         self._process = None
