@@ -153,8 +153,11 @@ class OMXPlayer:
         """Stop the video player.  block_timeout_sec is how many seconds to
         block waiting for the player to stop before moving on.
         """
+        # Save local reference to avoid race condition with other threads
+        process = self._process
+
         # Stop the player if it's running.
-        if self._process is not None and self._process.returncode is None:
+        if process is not None and process.returncode is None:
             # There are a couple processes used by omxplayer, so kill both
             # with a pkill command.
             subprocess.call(['pkill', '-9', 'omxplayer'])
@@ -162,12 +165,12 @@ class OMXPlayer:
             # Wait for THIS specific process to actually terminate
             if block_timeout_sec > 0:
                 try:
-                    self._process.wait(timeout=block_timeout_sec)
+                    process.wait(timeout=block_timeout_sec)
                 except subprocess.TimeoutExpired:
                     # Process didn't die, try to kill it directly
                     try:
-                        self._process.kill()
-                        self._process.wait(timeout=1)
+                        process.kill()
+                        process.wait(timeout=1)
                     except:
                         pass
 
