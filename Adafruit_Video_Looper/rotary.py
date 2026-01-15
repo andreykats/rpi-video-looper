@@ -15,6 +15,7 @@ I2C_ADDRESS = 0x8
 # GPIO pins for relay control (modify as needed)
 RELAY_UP_PIN = 22  # Frequency up relay
 RELAY_DOWN_PIN = 27  # Frequency down relay
+RELAY_BAND_PIN = 17  # Band selector relay
 
 # Initialize I2C bus
 bus = smbus.SMBus(1)  # Use bus 1 (check your specific Pi model)
@@ -46,14 +47,15 @@ class ChannelSwitcher:
     def __init__(self, on_channel_change=None):
         self.previous_channel = 0
         self.previous_frequency = 0
+        self.previous_band = 1  # Default to band 1
         self.on_channel_change = on_channel_change
 
-        # Load previously set frequency from file
-        self.previous_frequency = self.load_previous_values()
-        print(f"ChannelSwitcher initialized: previous_frequency = {self.previous_frequency}")
+        # Load previously set frequency and band from file
+        self.previous_frequency, self.previous_band = self.load_previous_values()
+        print(f"ChannelSwitcher initialized: previous_frequency = {self.previous_frequency}, previous_band = {self.previous_band}")
 
         self.initialize_relays()
-        print(f"Relays initialized on GPIO pins: UP={RELAY_UP_PIN}, DOWN={RELAY_DOWN_PIN}")
+        print(f"Relays initialized on GPIO pins: UP={RELAY_UP_PIN}, DOWN={RELAY_DOWN_PIN}, BAND={RELAY_BAND_PIN}")
 
         # Start a thread to execute the relay commands
         threading.Thread(target=self.execute_relay_commands, daemon=True).start()
@@ -70,6 +72,16 @@ class ChannelSwitcher:
         if channel_number == 0 or channel_number not in CHANNEL_FREQUENCY_MAP:
             return (None, None)
         return (channel_number, CHANNEL_FREQUENCY_MAP[channel_number])
+
+    def get_band_for_channel(self, channel):
+        """Get the band number for a channel.
+        Band 1: Channels 1-6
+        Band 2: Channels 7-13"""
+        if 1 <= channel <= 6:
+            return 1
+        elif 7 <= channel <= 13:
+            return 2
+        return None
 
     def _tune_to_frequency(self, target_frequency):
         """Tune to target frequency by pulsing relays."""
@@ -91,7 +103,7 @@ class ChannelSwitcher:
                 self.relay_channel_down()
 
         self.previous_frequency = target_frequency
-        self.save_previous_values(target_frequency)
+        self.save_previous_values(target_frequency, self.previous_band)
 
     def change_channel(self):
         # Read channel number from Arduino (0-13)
@@ -107,6 +119,11 @@ class ChannelSwitcher:
         # Only act if channel has changed
         if channel == self.previous_channel:
             return None
+
+        # Handle band switching first (before frequency tuning)
+        target_band = self.get_band_for_channel(channel)
+        if target_band is not None:
+            self._switch_to_band(target_band)
 
         # Handle relay tuning if frequency is specified
         if frequency is not None:
@@ -127,12 +144,12 @@ class ChannelSwitcher:
     def relay_channel_up(self):
         print(f"  → Relay UP queued (GPIO {RELAY_UP_PIN})")
         def engage():
-            print(f"    → GPIO {RELAY_UP_PIN} LOW (active-LOW relay)")
-            GPIO.output(RELAY_UP_PIN, GPIO.LOW)  # Turn on the relay (active-LOW)
+            print(f"    → GPIO {RELAY_UP_PIN} HIGH (relay on)")
+            GPIO.output(RELAY_UP_PIN, GPIO.HIGH)  # Turn on the relay
 
         def disengage():
-            print(f"    → GPIO {RELAY_UP_PIN} HIGH (active-LOW relay)")
-            GPIO.output(RELAY_UP_PIN, GPIO.HIGH)  # Turn off the relay (active-LOW)
+            print(f"    → GPIO {RELAY_UP_PIN} LOW (relay off)")
+            GPIO.output(RELAY_UP_PIN, GPIO.LOW)  # Turn off the relay
 
         relay_queue.put(engage)  # Add function to queue
         relay_queue.put(disengage)  # Add function to queue
@@ -140,15 +157,49 @@ class ChannelSwitcher:
     def relay_channel_down(self):
         print(f"  → Relay DOWN queued (GPIO {RELAY_DOWN_PIN})")
         def engage():
-            print(f"    → GPIO {RELAY_DOWN_PIN} LOW (active-LOW relay)")
-            GPIO.output(RELAY_DOWN_PIN, GPIO.LOW)  # Turn on the relay (active-LOW)
+            print(f"    → GPIO {RELAY_DOWN_PIN} HIGH (relay on)")
+            GPIO.output(RELAY_DOWN_PIN, GPIO.HIGH)  # Turn on the relay
 
         def disengage():
-            print(f"    → GPIO {RELAY_DOWN_PIN} HIGH (active-LOW relay)")
-            GPIO.output(RELAY_DOWN_PIN, GPIO.HIGH)  # Turn off the relay (active-LOW)
+            print(f"    → GPIO {RELAY_DOWN_PIN} LOW (relay off)")
+            GPIO.output(RELAY_DOWN_PIN, GPIO.LOW)  # Turn off the relay
 
         relay_queue.put(engage)  # Add function to queue
         relay_queue.put(disengage)  # Add function to queue
+
+    def relay_band_press(self):
+        print(f"  → Relay BAND queued (GPIO {RELAY_BAND_PIN})")
+        def engage():
+            print(f"    → GPIO {RELAY_BAND_PIN} HIGH (relay on)")
+            GPIO.output(RELAY_BAND_PIN, GPIO.HIGH)  # Turn on the relay
+
+        def disengage():
+            print(f"    → GPIO {RELAY_BAND_PIN} LOW (relay off)")
+            GPIO.output(RELAY_BAND_PIN, GPIO.LOW)  # Turn off the relay
+
+        relay_queue.put(engage)  # Add function to queue
+        relay_queue.put(disengage)  # Add function to queue
+
+    def _switch_to_band(self, target_band):
+        """Switch to target band by pulsing the band relay.
+        The modulator has 4 bands that cycle: 1 → 2 → 3 → 4 → 1..."""
+        if target_band == self.previous_band:
+            print(f"Already at band {target_band}, skipping band relay pulses")
+            return
+
+        # Calculate pulses needed to get from current band to target band (cycling through 4 bands)
+        if target_band > self.previous_band:
+            pulses = target_band - self.previous_band
+        else:
+            # Wrap around: e.g., from band 2 to band 1 = 4 - 2 + 1 = 3 pulses
+            pulses = 4 - self.previous_band + target_band
+
+        print(f"Switching from band {self.previous_band} to band {target_band} ({pulses} pulses)")
+        for _ in range(pulses):
+            self.relay_band_press()
+
+        self.previous_band = target_band
+        self.save_previous_values(self.previous_frequency, target_band)
 
     def execute_relay_commands(self):
         print("Relay command executor thread started")
@@ -161,23 +212,29 @@ class ChannelSwitcher:
             # Add a delay before processing the next item
             time.sleep(0.03)  # Adjust the delay as needed
 
-    # Save previous_frequency and previous_source to a file
-    def save_previous_values(self, previous_frequency):
+    # Save previous_frequency and previous_band to a file
+    def save_previous_values(self, previous_frequency, previous_band):
         with open('previous_values.pkl', 'wb') as f:
-            pickle.dump((previous_frequency), f)
+            pickle.dump((previous_frequency, previous_band), f)
 
-    # Load previous_frequency and previous_source from a file
+    # Load previous_frequency and previous_band from a file
     def load_previous_values(self):
         try:
             with open('previous_values.pkl', 'rb') as f:
-                return pickle.load(f)
+                data = pickle.load(f)
+                # Handle old format (just frequency) vs new format (frequency, band)
+                if isinstance(data, tuple):
+                    return data
+                else:
+                    return (data, 1)  # Old format: assume band 1
         except FileNotFoundError:
-            return 0  # Return 0 and None if file does not exist
+            return (0, 1)  # Return defaults if file does not exist
 
     def initialize_relays(self):
-        # Active-LOW relays: HIGH = off, LOW = on
-        GPIO.setup(RELAY_UP_PIN, GPIO.OUT, initial=GPIO.LOW)  # Start HIGH (relay off for active-LOW)
-        GPIO.setup(RELAY_DOWN_PIN, GPIO.OUT, initial=GPIO.LOW)  # Start HIGH (relay off for active-LOW)  
+        # Active-HIGH relays: HIGH = on, LOW = off
+        GPIO.setup(RELAY_UP_PIN, GPIO.OUT, initial=GPIO.LOW)  # Start LOW (relay off)
+        GPIO.setup(RELAY_DOWN_PIN, GPIO.OUT, initial=GPIO.LOW)  # Start LOW (relay off)
+        GPIO.setup(RELAY_BAND_PIN, GPIO.OUT, initial=GPIO.LOW)  # Start LOW (relay off)  
 
 
 if __name__ == "__main__":
