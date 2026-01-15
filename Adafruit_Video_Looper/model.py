@@ -2,10 +2,18 @@
 # Author: Tony DiCola
 # License: GNU GPLv2, see LICENSE.txt
 import random
+from enum import Enum
 from os.path import basename
 from typing import Optional, Union
 
 random.seed()
+
+
+class ChannelType(Enum):
+    """Type of content on a broadcast channel."""
+    VIDEO = "video"
+    GAME = "game"
+    EMPTY = "empty"
 
 class Movie:
     """Representation of a movie"""
@@ -142,6 +150,8 @@ class BroadcastChannelManager:
         self._channel_durations = {}  # Dict: channel_num -> total_duration
         self._broadcast_start_time = broadcast_start_time  # time.time() when app started
         self._default_playlist = None
+        self._channel_types = {}  # Dict: channel_num -> ChannelType
+        self._game_roms = {}      # Dict: channel_num -> rom_path
 
     def set_channel_playlist(self, channel_num, playlist):
         """Associate a playlist with a channel number (1-13)."""
@@ -202,3 +212,39 @@ class BroadcastChannelManager:
         """Check if channel has videos."""
         return (channel_num in self._channel_playlists and
                 self._channel_playlists[channel_num].length() > 0)
+
+    def set_channel_type(self, channel_num, channel_type, rom_path=None):
+        """Set the type of content for a channel.
+
+        Args:
+            channel_num: Channel number (1-13)
+            channel_type: ChannelType enum value
+            rom_path: Path to ROM file (for game channels only)
+        """
+        self._channel_types[channel_num] = channel_type
+        if rom_path:
+            self._game_roms[channel_num] = rom_path
+
+    def get_channel_type(self, channel_num):
+        """Get the type of content for a channel.
+
+        Returns:
+            ChannelType enum value, defaults to EMPTY if not set
+        """
+        return self._channel_types.get(channel_num, ChannelType.EMPTY)
+
+    def get_game_rom(self, channel_num):
+        """Get ROM path for a game channel.
+
+        Returns:
+            ROM file path string, or None if not a game channel
+        """
+        return self._game_roms.get(channel_num)
+
+    def is_game_channel(self, channel_num):
+        """Check if channel is a game channel.
+
+        Returns:
+            True if channel type is GAME, False otherwise
+        """
+        return self._channel_types.get(channel_num) == ChannelType.GAME

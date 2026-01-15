@@ -31,10 +31,10 @@ class USBDriveReader:
         return glob.glob(self._mount_path + '*')
 
     def search_channel_paths(self):
-        """Return dict mapping channel numbers to their folder paths.
+        """Return dict mapping channel numbers to their folder info and content type.
 
         Returns:
-            dict: {1: '/mnt/usbdrive0/1', 2: '/mnt/usbdrive0/2', ...}
+            dict: {channel_num: {'path': str, 'type': 'video'|'game', 'rom': str|None}}
             Only includes channels that exist on USB drive.
         """
         import os
@@ -42,15 +42,33 @@ class USBDriveReader:
         self._mounter.mount_all()
         usb_drives = glob.glob(self._mount_path + '*')
 
-        channel_paths = {}
+        channel_info = {}
         for drive in usb_drives:
             # Search for channel folders 1-13
             for channel_num in range(1, 14):
                 channel_path = os.path.join(drive, str(channel_num))
                 if os.path.exists(channel_path) and os.path.isdir(channel_path):
-                    channel_paths[channel_num] = channel_path
+                    # Check for NES ROM files (.nes extension)
+                    rom_files = [f for f in os.listdir(channel_path)
+                                if f.lower().endswith('.nes') and not f.startswith('.')]
 
-        return channel_paths
+                    if rom_files:
+                        # Game channel - use first ROM found alphabetically
+                        rom_files.sort()
+                        channel_info[channel_num] = {
+                            'path': channel_path,
+                            'type': 'game',
+                            'rom': os.path.join(channel_path, rom_files[0])
+                        }
+                    else:
+                        # Video channel (original behavior)
+                        channel_info[channel_num] = {
+                            'path': channel_path,
+                            'type': 'video',
+                            'rom': None
+                        }
+
+        return channel_info
 
     def is_changed(self):
         """Return true if the file search paths have changed, like when a new

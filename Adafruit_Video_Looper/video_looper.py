@@ -17,9 +17,10 @@ from datetime import datetime
 import RPi.GPIO as GPIO
 
 from .alsa_config import parse_hw_device
-from .model import Playlist, Movie
+from .model import Playlist, Movie, ChannelType
 from .playlist_builders import build_playlist_m3u
 from .rotary import ChannelSwitcher
+from .emulator_manager import EmulatorManager
 
 # Basic video looper architecure:
 #
@@ -94,6 +95,9 @@ class VideoLooper:
         self._broadcast_manager = None          # BroadcastChannelManager instance
         self._current_channel = 2               # Always start on channel 2
         self._broadcast_start_time = time.time()  # When broadcast started
+        # Emulator support
+        self._emulator_manager = None           # EmulatorManager instance (if game channels exist)
+        self._pygame_window_id = None           # Track pygame window for hiding/showing
         # Load ALSA hardware configuration.
         self._alsa_hw_device = parse_hw_device(self._config.get('alsa', 'hw_device'))
         self._alsa_hw_vol_control = self._config.get('alsa', 'hw_vol_control')
@@ -397,6 +401,9 @@ class VideoLooper:
     def _build_broadcast_channels(self):
         """Build broadcast TV-style channels with synchronized playback.
 
+        Now supports both video and game channels. Game channels are detected
+        by the presence of .nes ROM files in the channel folder.
+
         Returns:
             BroadcastChannelManager with playlists and durations for all channels.
         """
@@ -409,27 +416,46 @@ class VideoLooper:
             self._print("Channel mode not supported by file reader, using legacy mode")
             return None
 
-        channel_paths = self._reader.search_channel_paths()
+        channel_info = self._reader.search_channel_paths()
 
-        if len(channel_paths) == 0:
+        if len(channel_info) == 0:
             self._print("No channel folders found on USB drive")
             return None
 
         manager = BroadcastChannelManager(self._broadcast_start_time)
+        game_channels = []
 
-        self._print("Building broadcast channels (extracting video durations)...")
+        self._print("Building broadcast channels (detecting video and game content)...")
 
         # Build playlist for each channel
         for channel_num in range(1, 14):
-            if channel_num in channel_paths:
-                self._print(f"Channel {channel_num}:")
-                movies = self._get_movies_from_path(channel_paths[channel_num])
-                playlist = Playlist(sorted(movies))
-                manager.set_channel_playlist(channel_num, playlist)
+            if channel_num in channel_info:
+                info = channel_info[channel_num]
 
-                total_duration = sum(m.duration for m in movies)
-                self._print(f"  Total: {len(movies)} videos, {int(total_duration)}s loop")
+                if info['type'] == 'game':
+                    # Game channel - store ROM path
+                    rom_name = os.path.basename(info['rom'])
+                    self._print(f"Channel {channel_num}: GAME - {rom_name}")
+                    manager.set_channel_type(channel_num, ChannelType.GAME, info['rom'])
+                    game_channels.append((channel_num, info['rom']))
+                else:
+                    # Video channel - build playlist as before
+                    self._print(f"Channel {channel_num}:")
+                    movies = self._get_movies_from_path(info['path'])
+                    playlist = Playlist(sorted(movies))
+                    manager.set_channel_playlist(channel_num, playlist)
+                    manager.set_channel_type(channel_num, ChannelType.VIDEO)
+
+                    total_duration = sum(m.duration for m in movies)
+                    self._print(f"  Total: {len(movies)} videos, {int(total_duration)}s loop")
             # Channels without folders automatically use default
+
+        # Initialize emulator manager if we have game channels
+        if game_channels:
+            self._print(f"Found {len(game_channels)} game channel(s), initializing emulator")
+            self._emulator_manager = EmulatorManager(self._config)
+            # Set ROM for first game channel found
+            self._emulator_manager.set_rom(game_channels[0][1])
 
         # Create default playlist for empty channels (empty playlist = idle message)
         default_playlist = Playlist([])
@@ -597,7 +623,8 @@ class VideoLooper:
         """Handle rotary encoder channel changes with broadcast TV behavior.
 
         In broadcast mode: Calculates what should be playing on the target channel
-        at the current broadcast time and seeks to that position.
+        at the current broadcast time and seeks to that position. Supports both
+        video and game channels.
 
         In legacy mode: Jumps to video index like before.
 
@@ -614,33 +641,15 @@ class VideoLooper:
             return
 
         self._print(f"Switching from channel {previous_channel} to {channel}")
-
-        # Note: No need to stop here - play() calls stop() internally
+        self._current_channel = channel
 
         # Check if using broadcast mode or legacy mode
         if self._broadcast_manager is not None:
-            # BROADCAST MODE: Calculate what should be playing now
-            self._current_channel = channel
-
-            movie, seek_offset = self._broadcast_manager.calculate_broadcast_position(channel)
-
-            if movie is None:
-                self._print(f"Channel {channel} is empty")
-                self._playbackStopped = True
-                return
-
-            # Convert seek_offset to HH:MM:SS format for OMXPlayer
-            hours = int(seek_offset // 3600)
-            minutes = int((seek_offset % 3600) // 60)
-            seconds = int(seek_offset % 60)
-            seek_time_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-
-            self._print(f"Channel {channel}: Playing {movie.filename} @ {seek_time_str}")
-
-            # Play video with seek position
-            self._player.play(movie, vol=self._sound_vol, seek_position=seek_offset)
-            self._playbackStopped = False
-
+            # BROADCAST MODE: Check if target channel is a game channel
+            if self._broadcast_manager.is_game_channel(channel):
+                self._switch_to_game_channel(channel)
+            else:
+                self._switch_to_video_channel(channel)
         else:
             # LEGACY MODE: jump to video index (old behavior)
             video_index = channel - 1
@@ -648,7 +657,115 @@ class VideoLooper:
                 self._print(f"Channel {channel} out of range")
                 return
             self._playlist.set_next(video_index)
-            self._playbackStopped = False       
+            self._playbackStopped = False
+
+    def _switch_to_game_channel(self, channel):
+        """Switch to a game (emulator) channel.
+
+        Args:
+            channel: Channel number (1-13)
+        """
+        self._print(f"Activating GAME channel {channel}")
+
+        # Stop video playback
+        self._player.stop()
+        self._playbackStopped = True
+
+        # Hide pygame window
+        self._hide_pygame_window()
+
+        # Get ROM for this channel
+        rom_path = self._broadcast_manager.get_game_rom(channel)
+        if rom_path and self._emulator_manager:
+            # Check if emulator needs to be started or ROM changed
+            if not self._emulator_manager.is_running():
+                self._emulator_manager.set_rom(rom_path)
+                self._emulator_manager.start()
+
+            # Show emulator window
+            self._emulator_manager.show()
+            self._print(f"Playing game: {os.path.basename(rom_path)}")
+        else:
+            self._print(f"Warning: No ROM found for channel {channel}")
+
+    def _switch_to_video_channel(self, channel):
+        """Switch to a video channel.
+
+        Args:
+            channel: Channel number (1-13)
+        """
+        self._print(f"Activating VIDEO channel {channel}")
+
+        # Hide emulator if it was visible
+        if self._emulator_manager and self._emulator_manager.is_visible():
+            self._emulator_manager.hide()
+
+        # Show pygame window
+        self._show_pygame_window()
+
+        # Calculate broadcast position and play video
+        movie, seek_offset = self._broadcast_manager.calculate_broadcast_position(channel)
+
+        if movie is None:
+            self._print(f"Channel {channel} is empty")
+            self._playbackStopped = True
+            return
+
+        # Convert seek_offset to HH:MM:SS format for logging
+        hours = int(seek_offset // 3600)
+        minutes = int((seek_offset % 3600) // 60)
+        seconds = int(seek_offset % 60)
+        seek_time_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+        self._print(f"Channel {channel}: Playing {movie.filename} @ {seek_time_str}")
+
+        # Play video with seek position
+        self._player.play(movie, vol=self._sound_vol, seek_position=seek_offset)
+        self._playbackStopped = False
+
+    def _hide_pygame_window(self):
+        """Hide the pygame display window using wmctrl."""
+        if self._pygame_window_id is None:
+            self._pygame_window_id = self._get_pygame_window_id()
+
+        if self._pygame_window_id:
+            subprocess.run(
+                ['wmctrl', '-i', '-r', self._pygame_window_id, '-b', 'add,hidden'],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
+
+    def _show_pygame_window(self):
+        """Show and focus the pygame display window."""
+        if self._pygame_window_id is None:
+            self._pygame_window_id = self._get_pygame_window_id()
+
+        if self._pygame_window_id:
+            subprocess.run(
+                ['wmctrl', '-i', '-r', self._pygame_window_id, '-b', 'remove,hidden'],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
+            subprocess.run(
+                ['wmctrl', '-i', '-a', self._pygame_window_id],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
+
+    def _get_pygame_window_id(self):
+        """Get the window ID of the pygame display using xdotool.
+
+        Returns:
+            str: Window ID if found, None otherwise.
+        """
+        try:
+            # Try searching by pygame window name
+            result = subprocess.run(
+                ['xdotool', 'search', '--name', 'pygame'],
+                capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return result.stdout.strip().split('\n')[0]
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            pass
+        return None       
 
     def _handle_keyboard_shortcuts(self):
         while self._running:
@@ -727,8 +844,24 @@ class VideoLooper:
             # No playlist to prepare, set volume
             self._set_hardware_volume()
 
-            # Get initial movie for current channel at current broadcast time
-            movie, seek_offset = self._broadcast_manager.calculate_broadcast_position(self._current_channel)
+            # Start emulator in background if game channels exist
+            if self._emulator_manager:
+                self._print("Starting emulator in background...")
+                self._emulator_manager.start()
+
+            # Check if starting channel is a game channel
+            if self._broadcast_manager.is_game_channel(self._current_channel):
+                # Start on game channel
+                self._print(f"Starting on GAME channel {self._current_channel}")
+                self._hide_pygame_window()
+                if self._emulator_manager:
+                    self._emulator_manager.show()
+                movie = None
+                seek_offset = None
+                self._playbackStopped = True  # Don't try to play video
+            else:
+                # Get initial movie for current channel at current broadcast time
+                movie, seek_offset = self._broadcast_manager.calculate_broadcast_position(self._current_channel)
         else:
             # LEGACY MODE
             self._prepare_to_run_playlist(self._playlist)
@@ -848,6 +981,11 @@ class VideoLooper:
         self._playbackStopped = True
         self._running = False
         pygame.event.post(pygame.event.Event(pygame.QUIT))
+
+        # Stop emulator if running
+        if self._emulator_manager:
+            self._print("Stopping emulator...")
+            self._emulator_manager.stop()
 
         if self._player is not None:
             self._player.stop()
