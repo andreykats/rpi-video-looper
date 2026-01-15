@@ -54,9 +54,9 @@ class ChannelSwitcher:
         self.frequency_by_band = {1: 2, 2: 16}  # Default to lowest frequency per band
         self.on_channel_change = on_channel_change
 
-        # Load previously set frequencies and band from file
-        self.frequency_by_band, self.previous_band = self.load_previous_values()
-        print(f"ChannelSwitcher initialized: frequency_by_band = {self.frequency_by_band}, previous_band = {self.previous_band}")
+        # Load previously set frequencies, band, and channel from file
+        self.frequency_by_band, self.previous_band, self.previous_channel = self.load_previous_values()
+        print(f"ChannelSwitcher initialized: frequency_by_band = {self.frequency_by_band}, previous_band = {self.previous_band}, previous_channel = {self.previous_channel}")
 
         self.initialize_relays()
         print(f"Relays initialized on GPIO pins: UP={RELAY_UP_PIN}, DOWN={RELAY_DOWN_PIN}, BAND={RELAY_BAND_PIN}")
@@ -86,6 +86,10 @@ class ChannelSwitcher:
         if channel not in CHANNEL_MAP or CHANNEL_MAP[channel] is None:
             return None
         return CHANNEL_MAP[channel][0]  # Return band from (band, frequency) tuple
+
+    def get_initial_channel(self):
+        """Return the persisted channel for startup."""
+        return self.previous_channel
 
     def _tune_to_frequency(self, band, target_frequency):
         """Tune to target frequency within a band by pulsing relays."""
@@ -223,35 +227,41 @@ class ChannelSwitcher:
             time.sleep(0.03)  # Adjust the delay as needed
 
     def save_previous_values(self):
-        """Save frequency_by_band and previous_band to a file."""
+        """Save frequency_by_band, previous_band, and previous_channel to a file."""
         with open('previous_values.pkl', 'wb') as f:
-            pickle.dump((self.frequency_by_band, self.previous_band), f)
+            pickle.dump((self.frequency_by_band, self.previous_band, self.previous_channel), f)
 
     def load_previous_values(self):
-        """Load frequency_by_band and previous_band from a file.
-        Returns (frequency_by_band dict, band) tuple."""
+        """Load frequency_by_band, previous_band, and previous_channel from a file.
+        Returns (frequency_by_band dict, band, channel) tuple."""
         default_frequencies = {1: 2, 2: 16}  # Default to lowest frequency per band
+        default_channel = 2  # Default channel when no saved data exists
         try:
             with open('previous_values.pkl', 'rb') as f:
                 data = pickle.load(f)
-                # Handle new format: (frequency_by_band dict, band)
-                if isinstance(data, tuple) and isinstance(data[0], dict):
+                # Handle new format: (frequency_by_band dict, band, channel)
+                if isinstance(data, tuple) and len(data) == 3 and isinstance(data[0], dict):
                     return data
+                # Handle previous format: (frequency_by_band dict, band)
+                elif isinstance(data, tuple) and len(data) == 2 and isinstance(data[0], dict):
+                    return (data[0], data[1], default_channel)
                 # Handle old format: (single_frequency, band)
-                elif isinstance(data, tuple):
+                elif isinstance(data, tuple) and len(data) == 2:
                     old_freq, old_band = data
                     # Migrate: put old frequency in current band
                     frequencies = default_frequencies.copy()
                     if old_band in frequencies:
                         frequencies[old_band] = old_freq
-                    return (frequencies, old_band)
+                    return (frequencies, old_band, default_channel)
                 else:
                     # Very old format: just frequency
                     frequencies = default_frequencies.copy()
                     frequencies[1] = data
-                    return (frequencies, 1)
+                    return (frequencies, 1, default_channel)
         except FileNotFoundError:
-            return (default_frequencies, 1)  # Return defaults if file does not exist
+            return (default_frequencies, 1, default_channel)
+        except (EOFError, pickle.UnpicklingError):
+            return (default_frequencies, 1, default_channel)
 
     def initialize_relays(self):
         # Active-HIGH relays: HIGH = on, LOW = off

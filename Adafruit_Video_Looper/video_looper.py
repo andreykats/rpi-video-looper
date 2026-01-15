@@ -92,7 +92,7 @@ class VideoLooper:
         self._playlist = None
         # Broadcast TV mode variables
         self._broadcast_manager = None          # BroadcastChannelManager instance
-        self._current_channel = 1               # Currently active channel (1-13)
+        self._current_channel = None            # Will be set from ChannelSwitcher persistence
         self._broadcast_start_time = time.time()  # When broadcast started
         # Load ALSA hardware configuration.
         self._alsa_hw_device = parse_hw_device(self._config.get('alsa', 'hw_device'))
@@ -122,7 +122,9 @@ class VideoLooper:
 
         # Lets initialize the channel switcher on its own thread but delay its start until the vidoe playlist is created
         self._channel_switcher = ChannelSwitcher(self._handle_rotary_channel_switcher)
-        self._channel_switcher_thread = threading.Thread(target=self._channel_switcher.start, daemon=True)    
+        self._channel_switcher_thread = threading.Thread(target=self._channel_switcher.start, daemon=True)
+        # Get initial channel from persisted state (defaults to channel 2 if no saved data)
+        self._current_channel = self._channel_switcher.get_initial_channel()
 
         pinMapSetting = self._config.get('control', 'gpio_pin_map', raw=True)
         if pinMapSetting:
@@ -205,7 +207,7 @@ class VideoLooper:
         if self._broadcast_manager is not None:
             # Broadcast mode: Don't return a playlist, we'll use broadcast manager
             self._print("Using broadcast TV mode (time-synchronized channels)")
-            self._current_channel = 1
+            # Channel is already set from persisted state in __init__()
             return None  # Signal to use broadcast mode
 
         # Not in broadcast mode, try playlist files
@@ -728,8 +730,8 @@ class VideoLooper:
             # No playlist to prepare, set volume
             self._set_hardware_volume()
 
-            # Get initial movie for channel 1 at current broadcast time
-            movie, seek_offset = self._broadcast_manager.calculate_broadcast_position(1)
+            # Get initial movie for current channel at current broadcast time
+            movie, seek_offset = self._broadcast_manager.calculate_broadcast_position(self._current_channel)
         else:
             # LEGACY MODE
             self._prepare_to_run_playlist(self._playlist)
