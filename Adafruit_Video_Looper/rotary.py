@@ -208,6 +208,13 @@ class ChannelSwitcher:
         for _ in range(pulses):
             self.relay_band_press()
 
+        # Add 2 second delay for modulator to settle on new band
+        def band_settle_delay():
+            print("    → Waiting 2 seconds for band to settle...")
+            time.sleep(2)
+            print("    → Band settle delay complete")
+        relay_queue.put(band_settle_delay)
+
         # Reset tracked frequency to band's starting position
         # (hardware resets to start when switching bands)
         band_start_frequencies = {1: 2, 2: 16}
