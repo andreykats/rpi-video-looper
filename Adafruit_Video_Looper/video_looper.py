@@ -92,7 +92,7 @@ class VideoLooper:
         self._playlist = None
         # Broadcast TV mode variables
         self._broadcast_manager = None          # BroadcastChannelManager instance
-        self._current_channel = None            # Will be set from ChannelSwitcher persistence
+        self._current_channel = 2               # Always start on channel 2
         self._broadcast_start_time = time.time()  # When broadcast started
         # Load ALSA hardware configuration.
         self._alsa_hw_device = parse_hw_device(self._config.get('alsa', 'hw_device'))
@@ -123,8 +123,6 @@ class VideoLooper:
         # Lets initialize the channel switcher on its own thread but delay its start until the vidoe playlist is created
         self._channel_switcher = ChannelSwitcher(self._handle_rotary_channel_switcher)
         self._channel_switcher_thread = threading.Thread(target=self._channel_switcher.start, daemon=True)
-        # Get initial channel from persisted state (defaults to channel 2 if no saved data)
-        self._current_channel = self._channel_switcher.get_initial_channel()
 
         pinMapSetting = self._config.get('control', 'gpio_pin_map', raw=True)
         if pinMapSetting:
