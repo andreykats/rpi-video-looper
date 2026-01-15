@@ -125,7 +125,7 @@ class OMXPlayer:
             vol: Volume level
             seek_position: Seek to this position in seconds (for broadcast mode)
         """
-        self.stop(3)  # Up to 3 second delay to let the old player stop.
+        self.stop()  # Non-blocking stop for faster channel switching
         args = self.assemble_args(movie, loop, vol, seek_position)
         # Run omxplayer process and direct standard output to /dev/null.
         # Establish input pipe for commands
