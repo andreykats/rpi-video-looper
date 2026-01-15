@@ -1,9 +1,9 @@
 """
-EmulatorManager - Manages NES emulator (fceux) for game channel support.
+EmulatorManager - Manages NES emulator (nestopia) for game channel support.
 
 Responsibilities:
-- Start fceux subprocess with ROM file
-- Track fceux window ID via xdotool
+- Start nestopia subprocess with ROM file
+- Track nestopia window ID via xdotool
 - Show/hide emulator window via wmctrl
 - Clean shutdown of emulator process
 """
@@ -14,7 +14,7 @@ import time
 
 
 class EmulatorManager:
-    """Manages the fceux NES emulator process and window visibility."""
+    """Manages the nestopia NES emulator process and window visibility."""
 
     def __init__(self, config):
         self._process = None
@@ -26,14 +26,14 @@ class EmulatorManager:
     def _load_config(self, config):
         """Load emulator settings from [emulator] section of INI file."""
         self._fullscreen = config.getboolean('emulator', 'fullscreen', fallback=True)
-        self._fceux_path = config.get('emulator', 'fceux_path', fallback='fceux')
+        self._emulator_path = config.get('emulator', 'emulator_path', fallback='nestopia')
 
     def set_rom(self, rom_path):
         """Set the ROM file path to load."""
         self._rom_path = rom_path
 
     def start(self):
-        """Start fceux emulator in background (initially hidden).
+        """Start nestopia emulator in background (initially hidden).
 
         Returns:
             bool: True if emulator started successfully, False otherwise.
@@ -44,10 +44,10 @@ class EmulatorManager:
         if self._process is not None and self._process.poll() is None:
             return True  # Already running
 
-        # Build fceux command with options
-        args = [self._fceux_path]
+        # Build nestopia command with options
+        args = [self._emulator_path]
         if self._fullscreen:
-            args.extend(['--fullscreen', '1'])
+            args.append('-f')  # nestopia fullscreen flag
         args.append(self._rom_path)
 
         # Start process with output suppressed
@@ -58,39 +58,42 @@ class EmulatorManager:
                 stderr=subprocess.DEVNULL
             )
         except FileNotFoundError:
-            print(f"Error: fceux not found at '{self._fceux_path}'")
+            print(f"Error: emulator not found at '{self._emulator_path}'")
             return False
 
         # Wait for window to appear, then find and hide it
         time.sleep(1.5)
-        self._window_id = self._find_fceux_window()
+        self._window_id = self._find_emulator_window()
 
         if self._window_id:
             self.hide()  # Start hidden
             return True
         return False
 
-    def _find_fceux_window(self):
-        """Find fceux window ID using xdotool.
+    def _find_emulator_window(self):
+        """Find emulator window ID using xdotool.
 
         Returns:
             str: Window ID if found, None otherwise.
         """
-        try:
-            result = subprocess.run(
-                ['xdotool', 'search', '--name', 'fceux'],
-                capture_output=True, text=True, timeout=5
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                return result.stdout.strip().split('\n')[0]
-        except (subprocess.TimeoutExpired, FileNotFoundError):
-            pass
+        # Try multiple window name patterns
+        search_patterns = ['nestopia', 'Nestopia', 'NES']
+        for pattern in search_patterns:
+            try:
+                result = subprocess.run(
+                    ['xdotool', 'search', '--name', pattern],
+                    capture_output=True, text=True, timeout=5
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    return result.stdout.strip().split('\n')[0]
+            except (subprocess.TimeoutExpired, FileNotFoundError):
+                pass
         return None
 
     def show(self):
         """Bring emulator window to foreground."""
         if self._window_id is None:
-            self._window_id = self._find_fceux_window()
+            self._window_id = self._find_emulator_window()
 
         if self._window_id:
             # Remove hidden state
