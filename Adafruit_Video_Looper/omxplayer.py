@@ -158,8 +158,8 @@ class OMXPlayer:
         subprocess.call(['pkill', '-9', 'omxplayer.bin'])
 
         # Give the system time to clean up the killed processes
-        if block_timeout_sec > 0:
-            time.sleep(0.5)
+        # if block_timeout_sec > 0:
+        #     time.sleep(0.5)
 
         # Let the process reference be garbage collected.
         self._process = None
