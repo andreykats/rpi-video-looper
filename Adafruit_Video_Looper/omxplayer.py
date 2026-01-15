@@ -155,7 +155,7 @@ class OMXPlayer:
         """
         # Kill ALL omxplayer processes system-wide (omxplayer spawns child processes)
         subprocess.call(['pkill', '-9', 'omxplayer'])
-        # subprocess.call(['pkill', '-9', 'omxplayer.bin'])
+        subprocess.call(['pkill', '-9', 'omxplayer.bin'])
 
         # Let the process reference be garbage collected.
         self._process = None
