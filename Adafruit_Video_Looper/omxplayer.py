@@ -144,10 +144,12 @@ class OMXPlayer:
 
     def is_playing(self):
         """Return true if the video player is running, false otherwise."""
-        if self._process is None:
+        # Capture local reference to avoid race condition with stop()
+        process = self._process
+        if process is None:
             return False
-        self._process.poll()
-        return self._process.returncode is None
+        process.poll()
+        return process.returncode is None
 
     def stop(self, block_timeout_sec=0):
         """Stop the video player.  block_timeout_sec is how many seconds to
