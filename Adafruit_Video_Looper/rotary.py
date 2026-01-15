@@ -13,8 +13,8 @@ relay_queue = queue.Queue()
 I2C_ADDRESS = 0x8
 
 # GPIO pins for relay control (modify as needed)
-RELAY_UP_PIN = 22  # Frequency up relay
-RELAY_DOWN_PIN = 27  # Frequency down relay
+RELAY_UP_PIN = 27  # Frequency up relay
+RELAY_DOWN_PIN = 22  # Frequency down relay
 RELAY_BAND_PIN = 17  # Band selector relay
 
 # Initialize I2C bus
