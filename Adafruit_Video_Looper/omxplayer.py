@@ -152,12 +152,15 @@ class OMXPlayer:
         return process.returncode is None
 
     def stop(self, block_timeout_sec=0):
-        """Stop the video player.  block_timeout_sec is how many seconds to
-        block waiting for the player to stop before moving on.
+        """Stop the video player. Kill commands are non-blocking for faster
+        channel switching.
         """
         # Kill ALL omxplayer processes system-wide (omxplayer spawns child processes)
-        subprocess.call(['pkill', '-9', 'omxplayer'])
-        subprocess.call(['pkill', '-9', 'omxplayer.bin'])
+        # Using Popen instead of call to avoid blocking while processes terminate
+        subprocess.Popen(['pkill', '-9', 'omxplayer'],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.Popen(['pkill', '-9', 'omxplayer.bin'],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
         # Let the process reference be garbage collected.
         self._process = None

@@ -615,8 +615,7 @@ class VideoLooper:
 
         self._print(f"Switching from channel {previous_channel} to {channel}")
 
-        # Stop current playback
-        self._player.stop(3)
+        # Note: No need to stop here - play() calls stop() internally
 
         # Check if using broadcast mode or legacy mode
         if self._broadcast_manager is not None:
