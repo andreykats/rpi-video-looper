@@ -213,10 +213,10 @@ class ChannelSwitcher:
         for _ in range(pulses):
             self.relay_band_press()
 
-        # Add 1.5 second delay for modulator to settle on new band
+        # Add 2 second delay for modulator to settle on new band
         def band_settle_delay():
-            print("    → Waiting 1.5 seconds for band to settle...")
-            time.sleep(1.5)
+            print("    → Waiting 2 seconds for band to settle...")
+            time.sleep(2.0)
             print("    → Band settle delay complete")
         relay_queue.put(band_settle_delay)
 
