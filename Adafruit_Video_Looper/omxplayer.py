@@ -158,13 +158,19 @@ class OMXPlayer:
             # There are a couple processes used by omxplayer, so kill both
             # with a pkill command.
             subprocess.call(['pkill', '-9', 'omxplayer'])
-        # If a blocking timeout was specified, wait up to that amount of time
-        # for the process to stop.
-        start = time.time()
-        while self._process is not None and self._process.returncode is None:
-            if (time.time() - start) >= block_timeout_sec:
-                break
-            time.sleep(0)
+
+            # Wait for THIS specific process to actually terminate
+            if block_timeout_sec > 0:
+                try:
+                    self._process.wait(timeout=block_timeout_sec)
+                except subprocess.TimeoutExpired:
+                    # Process didn't die, try to kill it directly
+                    try:
+                        self._process.kill()
+                        self._process.wait(timeout=1)
+                    except:
+                        pass
+
         # Let the process be garbage collected.
         self._process = None
 
