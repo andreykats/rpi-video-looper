@@ -59,8 +59,11 @@ class VideoLooper:
         self._osd = self._config.getboolean('video_looper', 'osd')
         self._is_random = self._config.getboolean('video_looper', 'is_random')
         self._one_shot_playback = self._config.getboolean('video_looper', 'one_shot_playback')
+        self._play_on_startup = self._config.getboolean('video_looper', 'play_on_startup')
         self._resume_playlist = self._config.getboolean('video_looper', 'resume_playlist')
         self._keyboard_control = self._config.getboolean('control', 'keyboard_control')
+        self._keyboard_control_disabled_while_playback = self._config.getboolean('control', 'keyboard_control_disabled_while_playback')
+        self._gpio_control_disabled_while_playback = self._config.getboolean('control', 'gpio_control_disabled_while_playback')
         self._copyloader = self._config.getboolean('copymode', 'copyloader')
         # Get seconds for countdown from config
         self._countdown_time = self._config.getint('video_looper', 'countdown_time')
@@ -110,7 +113,7 @@ class VideoLooper:
         self._medium_font   = pygame.font.Font(None, 96)
         self._big_font   = pygame.font.Font(None, 250)
         self._running    = True
-        self._playbackStopped = False
+        self._playbackStopped = not self._play_on_startup
         #used for not waiting the first time
         self._firstStart = True
 
@@ -653,6 +656,11 @@ class VideoLooper:
     def _handle_keyboard_shortcuts(self):
         while self._running:
             event = pygame.event.wait()
+
+            if self._keyboard_control_disabled_while_playback and self._player.is_playing():
+                self._print('keyboard control disabled while playback is running')
+                continue
+
             if event.type == pygame.KEYDOWN:
                 # If pressed key is ESC quit program
                 if event.key == pygame.K_ESCAPE:
@@ -693,7 +701,11 @@ class VideoLooper:
     def _handle_gpio_control(self, pin):
         if self._pinMap == None:
             return
-        
+
+        if self._gpio_control_disabled_while_playback and self._player.is_playing():
+            self._print('gpio control disabled while playback is running')
+            return
+
         action = self._pinMap[str(pin)]
 
         self._print(f'pin {pin} triggered: {action}')
