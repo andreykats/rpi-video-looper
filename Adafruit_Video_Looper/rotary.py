@@ -30,7 +30,7 @@ GPIO.setwarnings(False)  # Disable warnings if pins are already in use
 # Band 1: RF channels 2-6 correspond to TV channels 2-6
 # Band 2: RF channels 16-22 correspond to TV channels 7-13
 CHANNEL_MAP = {
-    1: None,  # Channel 1 not used
+    1: None,
     2: (1, 2),
     3: (1, 3),
     4: (1, 4),
