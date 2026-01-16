@@ -12,7 +12,7 @@ fi
 
 echo "Installing dependencies..."
 echo "=========================="
-apt update && apt -y install python3 python3-pip python3-pygame supervisor mpv ntfs-3g exfat-fuse
+apt update && apt -y install python3 python3-pip python3-pygame python3-rpi.gpio python3-smbus supervisor mpv ntfs-3g exfat-fuse
 
 # if [ "$*" != "no_hello_video" ]
 # then
@@ -31,7 +31,7 @@ apt update && apt -y install python3 python3-pip python3-pygame supervisor mpv n
 #     echo "=========================="
 # fi
 
-echo "Installing video_looper program..."
+echo "Installing program..."
 echo "=================================="
 
 # change the directoy to the script location
@@ -40,16 +40,16 @@ cd "$(dirname "$0")"
 mkdir -p /mnt/usbdrive0 # This is very important if you put your system in readonly after
 mkdir -p /home/pi/video # create default video directory
 
-pip3 install setuptools
-python3 setup.py install --force
+# pip3 install setuptools
+# python3 setup.py install --force
 
-cp ./assets/video_looper.ini /boot/video_looper.ini
+# cp ./assets/video_looper.ini /boot/video_looper.ini
 
-echo "Configuring video_looper to run on start..."
-echo "==========================================="
+# echo "Configuring video_looper to run on start..."
+# echo "==========================================="
 
-cp ./assets/video_looper.conf /etc/supervisor/conf.d/
+# cp ./assets/video_looper.conf /etc/supervisor/conf.d/
 
-service supervisor restart
+# service supervisor restart
 
 echo "Finished!"
