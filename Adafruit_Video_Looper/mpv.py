@@ -278,12 +278,14 @@ class MPVPlayer:
         return process.returncode is None
 
     def stop(self):
-        """Stop the video player. Kill commands are non-blocking for faster
-        channel switching.
-        """
-        # Kill mpv process (mpv is a single process, unlike omxplayer)
-        subprocess.Popen(['pkill', '-9', 'mpv'],
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        """Stop the video player."""
+        # Kill only our specific mpv process, not all mpv processes
+        if self._process is not None:
+            try:
+                self._process.kill()
+                self._process.wait(timeout=0.5)
+            except (ProcessLookupError, subprocess.TimeoutExpired):
+                pass
 
         # Clean up socket
         if os.path.exists(self._socket_path):
