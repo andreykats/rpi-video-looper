@@ -132,7 +132,8 @@ class VideoLooper:
 
         # start keyboard handler thread:
         # Event handling for key press, if keyboard control is enabled
-        if self._keyboard_control:
+        # Skip if pygame display is not initialized (mpv player)
+        if self._keyboard_control and self._screen is not None:
             self._keyboard_thread = threading.Thread(target=self._handle_keyboard_shortcuts, daemon=True)
             self._keyboard_thread.start()
 
