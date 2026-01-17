@@ -1,10 +1,3 @@
-# Copyright 2015 Adafruit Industries.
-# Author: Tony DiCola
-# License: GNU GPLv2, see LICENSE.txt
-#
-# Simplified process manager for mpv and fceux players.
-# Removed pygame dependency - players handle their own display.
-
 import configparser
 import importlib
 import os

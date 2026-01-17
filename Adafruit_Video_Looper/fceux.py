@@ -1,5 +1,4 @@
-# Copyright 2024
-# License: GNU GPLv2, see LICENSE.txt
+
 import subprocess
 
 
