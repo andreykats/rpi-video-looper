@@ -12,7 +12,7 @@ fi
 
 echo "Installing dependencies..."
 echo "=========================="
-apt update && apt -y install python3 python3-pip python3-pygame python3-rpi.gpio python3-smbus supervisor mpv ntfs-3g exfat-fuse
+apt update && apt -y install python3 python3-pip python3-pygame python3-rpi-lgpio python3-smbus python3-pyudev supervisor mpv ntfs-3g exfat-fuse
 
 # if [ "$*" != "no_hello_video" ]
 # then

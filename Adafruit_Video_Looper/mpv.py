@@ -200,12 +200,22 @@ class MPVPlayer:
 
         args = self.assemble_args(movie, loop, vol, seek_position)
 
+        # Debug: print the command being run
+        print("MPV command: " + " ".join(args))
+
         # Run mpv process
         self._process = subprocess.Popen(args,
                                         stdout=subprocess.DEVNULL,
-                                        stderr=subprocess.DEVNULL,
+                                        stderr=subprocess.PIPE,
                                         stdin=subprocess.DEVNULL,
                                         close_fds=True)
+
+        # Give mpv a moment to start, then check if it crashed
+        time.sleep(0.1)
+        if self._process.poll() is not None:
+            stderr_output = self._process.stderr.read().decode('utf-8', errors='ignore')
+            print(f"MPV exited immediately with code {self._process.returncode}")
+            print(f"MPV stderr: {stderr_output}")
 
     def _send_ipc_command(self, command, timeout=1.0):
         """Send a command to mpv via IPC socket.
