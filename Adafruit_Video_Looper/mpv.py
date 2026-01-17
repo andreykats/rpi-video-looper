@@ -19,13 +19,13 @@ class MPVPlayer:
 
     def _load_config(self, config):
         """Load configuration from INI file."""
-        self._extensions = config.get('mpvplayer', 'extensions') \
+        self._extensions = config.get('mpv', 'extensions') \
                                  .translate(str.maketrans('', '', ' \t\r\n.')) \
                                  .split(',')
-        self._extra_args = config.get('mpvplayer', 'extra_args').split()
-        self._sound = config.get('mpvplayer', 'sound').lower()
-        self._hwdec = config.get('mpvplayer', 'hwdec', fallback='auto')
-        self._drm_connector = config.get('mpvplayer', 'drm_connector', fallback='')
+        self._extra_args = config.get('mpv', 'extra_args').split()
+        self._sound = config.get('mpv', 'sound').lower()
+        self._hwdec = config.get('mpv', 'hwdec', fallback='auto')
+        self._drm_connector = config.get('mpv', 'drm_connector', fallback='')
 
     def supported_extensions(self):
         """Return list of supported file extensions."""

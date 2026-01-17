@@ -1,6 +1,7 @@
 # Copyright 2015 Adafruit Industries.
 # Author: Tony DiCola
 # License: GNU GPLv2, see LICENSE.txt
+import os
 import random
 from os.path import basename
 from typing import Optional, Union
@@ -18,6 +19,14 @@ class Movie:
         self.repeats = int(repeats)
         self.playcount = 0
         self.duration = float(duration)  # Duration in seconds for broadcast mode
+        self.content_type = self._detect_content_type()
+
+    def _detect_content_type(self):
+        """Detect content type from file extension."""
+        ext = os.path.splitext(self.target)[1].lower().lstrip('.')
+        if ext in ('nes', 'fds', 'nsf'):
+            return 'nes'
+        return 'video'
 
     def was_played(self):
         if self.repeats > 1:
