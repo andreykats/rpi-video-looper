@@ -119,8 +119,8 @@ class MPVPlayer:
         """
         args = ['mpv']
 
-        # Fullscreen and no terminal output
-        args.extend(['--fs', '--really-quiet'])
+        # Fullscreen (removed --really-quiet for debugging)
+        args.extend(['--fs'])
 
         # Hardware decoding
         if self._hwdec:
@@ -208,19 +208,26 @@ class MPVPlayer:
         # Debug: print the command being run
         print("MPV command: " + " ".join(args))
 
-        # Run mpv process
+        # Run mpv process (capture stdout too for debugging)
         self._process = subprocess.Popen(args,
-                                        stdout=subprocess.DEVNULL,
+                                        stdout=subprocess.PIPE,
                                         stderr=subprocess.PIPE,
                                         stdin=subprocess.DEVNULL,
                                         close_fds=True)
 
-        # Give mpv a moment to start, then check if it crashed
-        time.sleep(0.1)
-        if self._process.poll() is not None:
+        # Give mpv a moment to start, then check status
+        time.sleep(0.5)
+        poll_result = self._process.poll()
+        print(f"MPV process started, PID: {self._process.pid}, poll after 0.5s: {poll_result}")
+
+        if poll_result is not None:
+            stdout_output = self._process.stdout.read().decode('utf-8', errors='ignore')
             stderr_output = self._process.stderr.read().decode('utf-8', errors='ignore')
-            print(f"MPV exited immediately with code {self._process.returncode}")
-            print(f"MPV stderr: {stderr_output}")
+            print(f"MPV exited with code {self._process.returncode}")
+            if stdout_output:
+                print(f"MPV stdout: {stdout_output}")
+            if stderr_output:
+                print(f"MPV stderr: {stderr_output}")
 
     def _send_ipc_command(self, command, timeout=1.0):
         """Send a command to mpv via IPC socket.
