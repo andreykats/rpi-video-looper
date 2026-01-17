@@ -48,6 +48,7 @@ class MPVPlayer:
         self._audio_device = config.get('mpv', 'audio_device').strip()
         self._default_volume = config.getint('mpv', 'volume')
         self._hwdec = config.get('mpv', 'hwdec').strip()
+        self._vo = config.get('mpv', 'vo').strip() if config.has_option('mpv', 'vo') else ''
         self._show_titles = config.getboolean('mpv', 'show_titles')
         if self._show_titles:
             title_duration = config.getint('mpv', 'title_duration')
@@ -124,6 +125,10 @@ class MPVPlayer:
         # Hardware decoding
         if self._hwdec:
             args.extend(['--hwdec=' + self._hwdec])
+
+        # Video output driver
+        if self._vo:
+            args.extend(['--vo=' + self._vo])
 
         # Video scaling - fill screen (equivalent to omxplayer --aspect-mode stretch)
         args.extend(['--keepaspect=no'])
