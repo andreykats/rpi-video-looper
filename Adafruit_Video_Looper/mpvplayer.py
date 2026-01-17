@@ -131,11 +131,14 @@ class MPVPlayer:
         # Add movie file path
         args.append(movie.target)
 
-        # Start mpv process
+        # Debug: print the command being run
+        print("MPV command: {}".format(' '.join(args)))
+
+        # Start mpv process (show stderr for debugging)
         self._process = subprocess.Popen(
             args,
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stderr=None,  # Show errors for debugging
             stdin=subprocess.DEVNULL,
             close_fds=True
         )
