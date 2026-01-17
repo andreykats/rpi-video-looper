@@ -82,13 +82,20 @@ class VideoLooper:
                                              .translate(str.maketrans('','', ','))
                                              .split()))
         # Initialize pygame and display a blank screen.
-        pygame.display.init()
-        pygame.font.init()
-        pygame.mouse.set_visible(False)
-        self._screen = pygame.display.set_mode((0,0), pygame.FULLSCREEN | pygame.NOFRAME)
-        self._size = (pygame.display.Info().current_w, pygame.display.Info().current_h)
-        self._bgimage = self._load_bgimage() #a tupple with pyimage, xpos, ypos
-        self._blank_screen()
+        # Skip pygame display for mpv player (uses DRM directly)
+        self._video_player_name = self._config.get('video_looper', 'video_player')
+        if self._video_player_name != 'mpvplayer':
+            pygame.display.init()
+            pygame.font.init()
+            pygame.mouse.set_visible(False)
+            self._screen = pygame.display.set_mode((0,0), pygame.FULLSCREEN | pygame.NOFRAME)
+            self._size = (pygame.display.Info().current_w, pygame.display.Info().current_h)
+            self._bgimage = self._load_bgimage() #a tupple with pyimage, xpos, ypos
+            self._blank_screen()
+        else:
+            self._screen = None
+            self._size = (1920, 1080)  # Default size for mpv
+            self._bgimage = None
         # Load configured video player and file reader modules.
         self._player = self._load_player()
         self._reader = self._load_file_reader()
@@ -109,9 +116,15 @@ class VideoLooper:
         self._sound_vol = 0
         # Set other static internal state.
         self._extensions = '|'.join(self._player.supported_extensions())
-        self._small_font = pygame.font.Font(None, 50)
-        self._medium_font   = pygame.font.Font(None, 96)
-        self._big_font   = pygame.font.Font(None, 250)
+        # Initialize fonts only if pygame display is initialized
+        if self._screen is not None:
+            self._small_font = pygame.font.Font(None, 50)
+            self._medium_font   = pygame.font.Font(None, 96)
+            self._big_font   = pygame.font.Font(None, 250)
+        else:
+            self._small_font = None
+            self._medium_font = None
+            self._big_font = None
         self._running    = True
         self._playbackStopped = not self._play_on_startup
         #used for not waiting the first time
@@ -442,6 +455,8 @@ class VideoLooper:
 
     def _blank_screen(self):
         """Render a blank screen filled with the background color and optional the background image."""
+        if self._screen is None:
+            return  # Skip for mpv player
         self._screen.fill(self._bgcolor)
         if self._bgimage[0] is not None:
             self._screen.blit(self._bgimage[0], (self._bgimage[1], self._bgimage[2]))
