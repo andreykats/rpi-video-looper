@@ -12,7 +12,7 @@ from datetime import datetime
 from .model import Playlist, Movie, BroadcastChannelManager
 from .rotary import ChannelSwitcher
 from .mpv import MPVPlayer
-from .fceux import FCEUXPlayer
+from .retroarch import RetroArchPlayer
 
 
 class ProcessManager:
@@ -36,7 +36,7 @@ class ProcessManager:
         # Initialize players
         self._players = {
             'video': MPVPlayer(self._config),
-            'nes': FCEUXPlayer(self._config),
+            'nes': RetroArchPlayer(self._config),
         }
         self._active_player = None
 
