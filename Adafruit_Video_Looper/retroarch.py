@@ -157,19 +157,17 @@ class RetroArchPlayer:
         return process.returncode is None
 
     def stop(self, block_timeout_sec=0):
-        """Stop RetroArch. Non-blocking for fast channel switching."""
-        import traceback
-        print("RetroArch stop() called from:")
-        traceback.print_stack()
-
+        """Stop RetroArch."""
         # Reset play request time so new plays can happen immediately
         self._play_requested_time = 0
 
         # Blank console to hide TTY during transition
         _blank_console()
 
-        subprocess.Popen(['pkill', '-9', 'retroarch'],
-                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        # Kill all retroarch processes - MUST be blocking to avoid race condition
+        # where pkill kills the newly started retroarch
+        subprocess.run(['pkill', '-9', 'retroarch'],
+                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self._process = None
 
     @staticmethod
