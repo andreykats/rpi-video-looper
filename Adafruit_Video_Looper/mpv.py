@@ -27,6 +27,7 @@ class MPVPlayer:
         """Create an instance of a video player that runs mpv in the background."""
         self._process = None
         self._ipc_sock = None
+        self._play_requested_time = 0  # Prevent duplicate plays during startup
         self._load_config(config)
 
     def _load_config(self, config):
@@ -97,6 +98,8 @@ class MPVPlayer:
         """Send command to mpv via IPC and verify response.
 
         Returns True only if MPV confirms command was received and processed.
+        MPV sends async events on the same socket, so we skip those and wait
+        for the actual command response.
         """
         if self._ipc_sock is None:
             return False
@@ -104,37 +107,48 @@ class MPVPlayer:
             msg = {"command": [command] + list(args)}
             self._ipc_sock.send((json.dumps(msg) + '\n').encode())
 
-            # Read response with timeout (socket is non-blocking)
-            # Use select to wait for data with timeout
-            ready, _, _ = select.select([self._ipc_sock], [], [], 0.5)
-            if not ready:
-                print('MPV IPC: No response (timeout)')
-                return False
+            # Read responses until we get command result (skip async events)
+            # MPV events have 'event' key, command responses have 'error' key
+            deadline = time.time() + 0.5
+            buffer = b''
 
-            # Read response
-            response = b''
-            while True:
+            while time.time() < deadline:
+                remaining = deadline - time.time()
+                if remaining <= 0:
+                    break
+
+                ready, _, _ = select.select([self._ipc_sock], [], [], min(remaining, 0.1))
+                if not ready:
+                    continue
+
                 try:
                     chunk = self._ipc_sock.recv(4096)
                     if not chunk:
                         break
-                    response += chunk
-                    if b'\n' in response:
-                        break
+                    buffer += chunk
                 except (socket.error, BlockingIOError):
-                    break
+                    continue
 
-            if response:
-                try:
-                    result = json.loads(response.decode().strip().split('\n')[0])
-                    if 'error' in result and result['error'] == 'success':
-                        return True
-                    else:
-                        print('MPV IPC: Command error: {}'.format(result))
-                        return False
-                except json.JSONDecodeError:
-                    print('MPV IPC: Invalid response')
-                    return False
+                # Process complete lines
+                while b'\n' in buffer:
+                    line, buffer = buffer.split(b'\n', 1)
+                    if not line.strip():
+                        continue
+                    try:
+                        result = json.loads(line.decode())
+                        # Skip async events (they have 'event' key)
+                        if 'event' in result:
+                            continue
+                        # This is a command response
+                        if result.get('error') == 'success':
+                            return True
+                        else:
+                            print('MPV IPC: Command failed: {}'.format(result))
+                            return False
+                    except json.JSONDecodeError:
+                        continue
+
+            print('MPV IPC: Timeout waiting for response')
             return False
         except (socket.error, OSError, BrokenPipeError) as e:
             print('MPV IPC: Socket error: {}'.format(e))
@@ -182,6 +196,9 @@ class MPVPlayer:
         # Fallback: kill and restart mpv
         self.stop()
         self._cleanup_socket()
+
+        # Mark play as requested to prevent duplicate calls during startup
+        self._play_requested_time = time.time()
 
         # Build command arguments
         args = ['mpv']
@@ -255,8 +272,13 @@ class MPVPlayer:
     def is_playing(self):
         """Return true if the video player is running, false otherwise.
 
-        Called every 2ms in main loop - must be lightweight!
+        Called frequently in main loop - must be lightweight!
+        Also returns True during startup grace period to prevent duplicate plays.
         """
+        # During startup, return True to prevent duplicate play calls
+        if time.time() - self._play_requested_time < 2.0:
+            return True
+
         # Capture local reference to avoid race condition with stop()
         process = self._process
         if process is None:
@@ -266,6 +288,9 @@ class MPVPlayer:
 
     def stop(self):
         """Stop the video player. Non-blocking for fast channel switching."""
+        # Reset play request time so new plays can happen immediately
+        self._play_requested_time = 0
+
         # Blank console to hide TTY during transition
         _blank_console()
 
