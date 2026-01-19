@@ -58,6 +58,8 @@ class ProcessManager:
         # Runtime state
         self._running = True
         self._playback_stopped = False
+        self._autoplay_suppress_until = 0
+        self._channel_change_guard_sec = 3.0
 
         # Volume settings
         self._sound_vol = 0
@@ -247,6 +249,7 @@ class ProcessManager:
 
             self._print(f"Channel {channel}: Playing {movie.filename}")
             self._play_movie(movie, seek_offset)
+            self._autoplay_suppress_until = time.time() + self._channel_change_guard_sec
             self._playback_stopped = False
         else:
             # Legacy mode
@@ -291,7 +294,7 @@ class ProcessManager:
             # Check if any player is playing
             any_playing = any(p.is_playing() for p in self._players.values())
 
-            if not any_playing and not self._playback_stopped:
+            if not any_playing and not self._playback_stopped and time.time() >= self._autoplay_suppress_until:
                 if movie is not None:
                     # Get next movie based on mode
                     if self._broadcast_manager is not None:
