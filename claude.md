@@ -5,20 +5,20 @@ A Raspberry Pi video looper for **retro TV simulation**. Based on Adafruit Video
 - 13-channel broadcast TV simulation with synchronized playback
 - RF modulator hardware control via GPIO relays
 - Rotary encoder channel switching via I2C
+- Multi-player support: MPV for video, RetroArch for NES ROMs
 
-**Target Hardware**: Raspberry Pi (runs on remote Pi, NOT this development machine)
-**OS Requirement**: Raspberry Pi OS Legacy (Buster) - omxplayer is deprecated on newer versions
+**Target Hardware**: Raspberry Pi 5 (runs on remote Pi, NOT this development machine)
+**OS**: DietPi (requires `dtoverlay=vc4-kms-v3d` in `/boot/config.txt` for DRM/KMS)
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `Adafruit_Video_Looper/video_looper.py` | Main orchestrator - `VideoLooper` class, main loop, playlist building |
+| `Adafruit_Video_Looper/process_manager.py` | Main orchestrator - `ProcessManager` class, main loop, playlist building |
 | `Adafruit_Video_Looper/model.py` | Data models: `Movie`, `Playlist`, `BroadcastChannelManager` |
 | `Adafruit_Video_Looper/rotary.py` | `ChannelSwitcher` class, relay control, I2C communication |
-| `Adafruit_Video_Looper/omxplayer.py` | Primary video player wrapper (subprocess-based) |
-| `Adafruit_Video_Looper/hello_video.py` | Lightweight H264-only player alternative |
-| `Adafruit_Video_Looper/image_player.py` | Static image slideshow player |
+| `Adafruit_Video_Looper/mpv.py` | MPV video player wrapper (DRM output, IPC for fast switching) |
+| `Adafruit_Video_Looper/retroarch.py` | RetroArch emulator wrapper (NES ROMs via Nestopia core) |
 | `Adafruit_Video_Looper/usb_drive.py` | USB drive file reader with pyudev monitoring |
 | `Adafruit_Video_Looper/directory.py` | Local directory file reader |
 | `assets/video_looper.ini` | Default configuration template |
@@ -38,6 +38,33 @@ A Raspberry Pi video looper for **retro TV simulation**. Based on Adafruit Video
 - Channel number (1-13) = video index in playlist
 - Sequential or random playback
 
+## Players
+
+### MPVPlayer (mpv.py)
+Video playback using MPV with DRM/KMS output:
+- `--vo=drm` for direct framebuffer output (no X11/Wayland needed)
+- IPC socket (`/tmp/mpv-video-looper.sock`) for fast video switching
+- 2-second startup grace period to prevent duplicate launches
+- Supports seek position for broadcast mode synchronization
+
+### RetroArchPlayer (retroarch.py)
+NES emulation using RetroArch:
+- Uses `gl` video driver with `kms` context for framebuffer output
+- Nestopia libretro core for NES/FDS/NSF files
+- UDP network commands (port 55355) for ROM switching
+- 2-second startup grace period
+- **Critical**: `stop()` must use blocking `subprocess.run()` (not `Popen`) to avoid race condition where pkill kills newly-started process
+
+Config written to `/tmp/retroarch-video-looper.cfg`:
+```ini
+video_driver = "gl"
+video_context_driver = "kms"
+audio_driver = "alsa"
+input_driver = "udev"
+network_cmd_enable = "true"
+network_cmd_port = "55355"
+```
+
 ## Hardware Integration
 
 ### Rotary Encoder (Channel Selection)
@@ -50,36 +77,37 @@ A Raspberry Pi video looper for **retro TV simulation**. Based on Adafruit Video
 | GPIO Pin | Purpose |
 |----------|---------|
 | 17 | Band selector relay |
-| 22 | Frequency UP relay |
-| 27 | Frequency DOWN relay |
+| 22 | Frequency DOWN relay |
+| 27 | Frequency UP relay |
 
 - **Active-HIGH** logic
 - Thread-safe queue with 30ms delays between pulses
 - State persisted to `previous_values.pkl`
 
 ### Band System
-- **Band 1**: Channels 1-6
-- **Band 2**: Channels 7-13
-- Modulator cycles through 4 bands (1→2→3→4→1)
+- **Band 1**: Channels 2-6 (RF frequencies 2-6)
+- **Band 2**: Channels 7-13 (RF frequencies 16-22)
+- Channel 1 is unmapped (no relay activation)
+- Modulator cycles through 5 bands (1→2→3→4→5→1)
 - Code calculates minimum pulses to reach target band
 
 ## Important Classes
 
-### VideoLooper (video_looper.py)
+### ProcessManager (process_manager.py)
 Main application class:
 - Loads config from INI file
-- Initializes pygame display
-- Dynamically loads player and file reader modules
+- Initializes MPV and RetroArch players
+- Selects player based on file extension (content_type)
 - Builds playlists (broadcast or legacy mode)
 - Main loop: checks player status, handles channel changes, USB insertion
 
 ### ChannelSwitcher (rotary.py)
 Hardware control:
-- `read_remote_rotary_encoder()` - polls I2C
-- `_handle_channel_change()` - callback on channel change
+- `read_remote_rotary_encoder()` - polls I2C at address 0x8
+- `on_channel_change` callback - triggers player switch
 - `relay_channel_up/down()` - queue frequency relay pulses
 - `relay_band_press()` - queue band relay pulses
-- `execute_relay_commands()` - thread consuming relay queue
+- `execute_relay_commands()` - daemon thread consuming relay queue
 
 ### BroadcastChannelManager (model.py)
 Synchronized playback:
@@ -96,48 +124,59 @@ Video sequencing:
 ## Entry Points
 
 ```bash
-# Start the looper
-./run.sh  # runs: python3 -m Adafruit_Video_Looper.video_looper
+# Start the process manager
+python3 -m Adafruit_Video_Looper.process_manager
 
-# Or directly
-python3 -m Adafruit_Video_Looper.video_looper
+# Or with custom config
+python3 -m Adafruit_Video_Looper.process_manager /path/to/config.ini
 ```
 
 ## Configuration (video_looper.ini)
 
 Key sections:
-- `[video_looper]`: player, file_reader, osd, wait_time, bgcolor, etc.
-- `[control]`: keyboard_control, gpio_pin_map
-- `[omxplayer]`: extensions, sound output, extra_args
+- `[process_manager]`: file_reader, console_output, is_random, wait_time
+- `[mpv]`: extensions, sound, hwdec, drm_connector, extra_args
+- `[retroarch]`: extensions, core_path, video_driver, video_context_driver
 - `[directory]`: path for local directory mode
-- `[playlist]`: M3U playlist path
-
-## Keyboard Controls (if enabled)
-| Key | Action |
-|-----|--------|
-| ESC | Quit |
-| K | Skip to next video |
-| B | Go back one video |
-| SPACE | Pause/resume |
-| S | Stop/resume playback |
-| P | Shutdown system |
-| O/I | Next/previous chapter |
+- `[usb_drive]`: mount path for USB drive mode
 
 ## Threading Model
-- **Main thread**: pygame display loop, video playback
-- **Keyboard handler**: daemon thread (if enabled)
+- **Main thread**: main loop checking player status
 - **Channel switcher**: daemon thread polling I2C
 - **Relay executor**: daemon thread processing relay queue
 
-## Recent Custom Features
-1. **Broadcast TV mode** with time-synchronized 13 channels
-2. **Band relay system** for RF modulator frequency control
-3. **Channel-to-frequency mapping** with selective tuning
-4. **State persistence** via pickle file for relay state
+## DietPi Setup Notes
+
+### Required /boot/config.txt setting:
+```ini
+dtoverlay=vc4-kms-v3d
+```
+**WARNING**: Common typo is `vc4-ksm-v3d` (letters swapped) - this will cause `/dev/dri/` to not exist and both MPV and RetroArch will fail.
+
+### Verify DRM is working:
+```bash
+ls -la /dev/dri/
+# Should show card0, card1, renderD128, etc.
+```
 
 ## Dependencies
-- `pygame` - display and input
 - `pyudev` - USB drive monitoring
 - `smbus` - I2C communication
-- `RPi.GPIO` - GPIO control (on Pi only)
-- `omxplayer` - video playback (legacy Pi OS only)
+- `RPi.GPIO` - GPIO control
+- `mpv` - video playback (system package)
+- `retroarch` - emulation (system package)
+- `nestopia_libretro.so` - NES core at `/usr/lib/aarch64-linux-gnu/libretro/`
+
+## Common Issues
+
+### RetroArch restart loop
+- **Cause**: Race condition where `pkill -9 retroarch` runs async and kills newly-started process
+- **Fix**: Use `subprocess.run()` (blocking) instead of `subprocess.Popen()` for pkill
+
+### XDG_RUNTIME_DIR errors
+- **Cause**: Missing DRM/KMS kernel drivers
+- **Fix**: Ensure `dtoverlay=vc4-kms-v3d` in `/boot/config.txt` (check for typos!)
+
+### Channel switching not working
+- Check I2C: `i2cget -y 1 0x8` and turn knob
+- Check logs for "Switching from channel X to Y" messages
