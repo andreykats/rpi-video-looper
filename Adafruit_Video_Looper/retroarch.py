@@ -1,6 +1,19 @@
+import socket
 import subprocess
 
 OVERRIDE_CONFIG_PATH = '/tmp/retroarch-video-looper.cfg'
+RETROARCH_CMD_PORT = 55355
+
+
+def _blank_console():
+    """Blank the console to hide TTY during player transitions."""
+    try:
+        with open('/dev/tty1', 'w') as tty:
+            tty.write('\033[?25l')  # Hide cursor
+            tty.write('\033[2J')     # Clear screen
+            tty.write('\033[H')      # Home cursor
+    except (IOError, PermissionError):
+        pass  # Not running on console or no permission
 
 
 class RetroArchPlayer:
@@ -28,11 +41,41 @@ class RetroArchPlayer:
         """Return list of supported file extensions."""
         return self._extensions
 
+    def _send_udp_command(self, command):
+        """Send command to RetroArch via UDP network interface."""
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.settimeout(0.1)
+            sock.sendto(command.encode(), ('127.0.0.1', RETROARCH_CMD_PORT))
+            sock.close()
+            return True
+        except Exception:
+            return False
+
+    def _load_via_network(self, rom_path, filename):
+        """Load new ROM via network command without restarting RetroArch.
+
+        Returns True if successful, False if command failed.
+        """
+        try:
+            if self._send_udp_command('LOAD_CONTENT {}'.format(rom_path)):
+                print('RetroArch: Loaded {} via network command'.format(filename))
+                return True
+            return False
+        except Exception:
+            return False
+
     def play(self, movie, loop=None, vol=0, seek_position=None):
         """Start RetroArch with the provided ROM file.
 
         Note: loop, vol, and seek_position are ignored for ROMs.
         """
+        # Try network command if RetroArch is already running (fast ROM switching)
+        if self.is_playing():
+            if self._load_via_network(movie.target, movie.filename):
+                return  # Success - no need to restart
+
+        # Fallback: kill and restart RetroArch
         self.stop()
 
         if not self._core_path:
@@ -68,6 +111,9 @@ class RetroArchPlayer:
             'audio_driver = "{}"'.format(self._audio_driver),
             'input_driver = "{}"'.format(self._input_driver),
             'video_fullscreen = "{}"'.format(fullscreen),
+            # Enable network commands for fast ROM switching
+            'network_cmd_enable = "true"',
+            'network_cmd_port = "{}"'.format(RETROARCH_CMD_PORT),
         ]
         with open(OVERRIDE_CONFIG_PATH, 'w') as handle:
             handle.write('\n'.join(lines) + '\n')
@@ -94,6 +140,9 @@ class RetroArchPlayer:
 
     def stop(self, block_timeout_sec=0):
         """Stop RetroArch. Non-blocking for fast channel switching."""
+        # Blank console to hide TTY during transition
+        _blank_console()
+
         subprocess.Popen(['pkill', '-9', 'retroarch'],
                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self._process = None

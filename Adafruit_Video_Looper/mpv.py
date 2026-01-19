@@ -9,6 +9,17 @@ import json
 SOCKET_PATH = '/tmp/mpv-video-looper.sock'
 
 
+def _blank_console():
+    """Blank the console to hide TTY during player transitions."""
+    try:
+        with open('/dev/tty1', 'w') as tty:
+            tty.write('\033[?25l')  # Hide cursor
+            tty.write('\033[2J')     # Clear screen
+            tty.write('\033[H')      # Home cursor
+    except (IOError, PermissionError):
+        pass  # Not running on console or no permission
+
+
 class MPVPlayer:
 
     def __init__(self, config):
@@ -81,6 +92,27 @@ class MPVPlayer:
         except (socket.error, OSError, BrokenPipeError):
             return False
 
+    def _load_via_ipc(self, movie, seek_position=None):
+        """Load new video via IPC without restarting mpv.
+
+        Returns True if successful, False if IPC failed.
+        """
+        try:
+            # Use loadfile command to replace current video
+            # Format: loadfile <path> [replace|append] [options]
+            if seek_position and seek_position > 0:
+                # With seek position: loadfile path replace start=N
+                options = 'start={}'.format(int(seek_position))
+                success = self._send_ipc_command('loadfile', movie.target, 'replace', options)
+            else:
+                success = self._send_ipc_command('loadfile', movie.target, 'replace')
+
+            if success:
+                print('MPV: Loaded {} via IPC'.format(movie.filename))
+            return success
+        except Exception:
+            return False
+
     def play(self, movie, loop=None, vol=0, seek_position=None):
         """Play the provided movie file, optionally looping it repeatedly.
 
@@ -90,7 +122,13 @@ class MPVPlayer:
             vol: Volume in millibels (omxplayer compatibility, converted to percentage)
             seek_position: Seek to this position in seconds (for broadcast mode)
         """
-        self.stop()  # Non-blocking stop for fast channel switching
+        # Try IPC if mpv is already running (fast channel switching)
+        if self.is_playing() and self._ipc_sock:
+            if self._load_via_ipc(movie, seek_position):
+                return  # Success - no need to restart
+
+        # Fallback: kill and restart mpv
+        self.stop()
         self._cleanup_socket()
 
         # Build command arguments
@@ -176,6 +214,9 @@ class MPVPlayer:
 
     def stop(self):
         """Stop the video player. Non-blocking for fast channel switching."""
+        # Blank console to hide TTY during transition
+        _blank_console()
+
         # Try graceful quit via IPC
         if self._ipc_sock:
             try:

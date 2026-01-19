@@ -232,8 +232,8 @@ class ProcessManager:
 
         self._print(f"Switching from channel {previous_channel} to {channel}")
 
-        # Stop all players before switching
-        self._stop_all_players()
+        # Note: Don't stop players here - let _play_movie() handle it
+        # This allows same-player-type transitions to use IPC (fast switching)
 
         if self._broadcast_manager is not None:
             # Broadcast mode
@@ -258,6 +258,11 @@ class ProcessManager:
     def _play_movie(self, movie, seek_offset=None):
         """Play a movie with the appropriate player."""
         player = self._get_player_for_movie(movie)
+
+        # If switching to a different player type, stop the old one first
+        # Same-player-type transitions are handled by the player's IPC (fast)
+        if self._active_player is not None and self._active_player != player:
+            self._active_player.stop()
 
         # Only pass seek_offset for video content
         if movie.content_type == 'video' and seek_offset:
