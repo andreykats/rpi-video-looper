@@ -141,11 +141,13 @@ class RetroArchPlayer:
             # Video scaling options for full screen stretch
             'video_scale_integer = "{}"'.format(scale_integer),
             'video_force_aspect = "{}"'.format(force_aspect),
+            # aspect_ratio_index: 22 = Full (stretch to fill screen)
+            'aspect_ratio_index = 22',
             # Audio
             'audio_enable = "{}"'.format(audio_enable),
             # Save states
             'savestate_auto_load = "{}"'.format(savestate_auto_load),
-            'autosave_interval = "{}"'.format(self._autosave_interval),
+            'autosave_interval = {}'.format(self._autosave_interval),
             # Enable network commands for fast ROM switching
             'network_cmd_enable = "true"',
             'network_cmd_port = "{}"'.format(RETROARCH_CMD_PORT),
