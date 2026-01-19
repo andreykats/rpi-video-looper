@@ -37,6 +37,11 @@ class RetroArchPlayer:
         self._audio_driver = config.get('retroarch', 'audio_driver', fallback='alsa').strip()
         self._input_driver = config.get('retroarch', 'input_driver', fallback='udev').strip()
         self._fullscreen = config.getboolean('retroarch', 'fullscreen', fallback=True)
+        self._video_scale_integer = config.getboolean('retroarch', 'video_scale_integer', fallback=False)
+        self._video_force_aspect = config.getboolean('retroarch', 'video_force_aspect', fallback=False)
+        self._audio_enable = config.getboolean('retroarch', 'audio_enable', fallback=True)
+        self._autosave_interval = config.getint('retroarch', 'autosave_interval', fallback=0)
+        self._savestate_auto_load = config.getboolean('retroarch', 'savestate_auto_load', fallback=True)
         self._extra_args = config.get('retroarch', 'extra_args', fallback='').split()
 
     def supported_extensions(self):
@@ -123,12 +128,24 @@ class RetroArchPlayer:
     def _write_override_config(self):
         """Write a minimal RetroArch override config for this launch."""
         fullscreen = 'true' if self._fullscreen else 'false'
+        scale_integer = 'true' if self._video_scale_integer else 'false'
+        force_aspect = 'true' if self._video_force_aspect else 'false'
+        audio_enable = 'true' if self._audio_enable else 'false'
+        savestate_auto_load = 'true' if self._savestate_auto_load else 'false'
         lines = [
             'video_driver = "{}"'.format(self._video_driver),
             'video_context_driver = "{}"'.format(self._video_context_driver),
             'audio_driver = "{}"'.format(self._audio_driver),
             'input_driver = "{}"'.format(self._input_driver),
             'video_fullscreen = "{}"'.format(fullscreen),
+            # Video scaling options for full screen stretch
+            'video_scale_integer = "{}"'.format(scale_integer),
+            'video_force_aspect = "{}"'.format(force_aspect),
+            # Audio
+            'audio_enable = "{}"'.format(audio_enable),
+            # Save states
+            'savestate_auto_load = "{}"'.format(savestate_auto_load),
+            'autosave_interval = "{}"'.format(self._autosave_interval),
             # Enable network commands for fast ROM switching
             'network_cmd_enable = "true"',
             'network_cmd_port = "{}"'.format(RETROARCH_CMD_PORT),
