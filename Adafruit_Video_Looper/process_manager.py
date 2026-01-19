@@ -262,7 +262,10 @@ class ProcessManager:
         # If switching to a different player type, stop the old one first
         # Same-player-type transitions are handled by the player's IPC (fast)
         if self._active_player is not None and self._active_player != player:
-            self._active_player.stop()
+            if isinstance(self._active_player, RetroArchPlayer):
+                self._active_player.pause()
+            else:
+                self._active_player.stop()
 
         # Only pass seek_offset for video content
         if movie.content_type == 'video' and seek_offset:

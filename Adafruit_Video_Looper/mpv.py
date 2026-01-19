@@ -217,7 +217,7 @@ class MPVPlayer:
         args.extend(['--no-osc'])
         args.extend(['--no-input-default-bindings'])
         args.extend(['--keep-open=no'])
-        args.extend(['--video-aspect-override=no'])  # Stretch to fill (like omxplayer)
+        # args.extend(['--video-aspect-override=no'])  # Stretch to fill (like omxplayer)
 
         # Handle DRM connector if specified
         if self._drm_connector:

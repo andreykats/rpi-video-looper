@@ -1,3 +1,4 @@
+import signal
 import socket
 import subprocess
 import time
@@ -24,6 +25,8 @@ class RetroArchPlayer:
         """Create an instance of a player that runs RetroArch in the background."""
         self._process = None
         self._play_requested_time = 0  # Prevent duplicate plays during startup
+        self._paused = False
+        self._current_rom = None
         self._load_config(config)
 
     def _load_config(self, config):
@@ -72,9 +75,16 @@ class RetroArchPlayer:
 
         Note: loop, vol, and seek_position are ignored for ROMs.
         """
+        if self._paused:
+            same_rom = self._current_rom == movie.target
+            resumed = self._resume()
+            if same_rom and resumed:
+                return
+
         # Try network command if RetroArch is already running (fast ROM switching)
         if self.is_playing():
             if self._load_via_network(movie.target, movie.filename):
+                self._current_rom = movie.target
                 return  # Success - no need to restart
             # Network command failed but process is still starting - don't restart
             print('RetroArch: Ignoring play() during startup (network not ready)')
@@ -109,6 +119,8 @@ class RetroArchPlayer:
             stdin=subprocess.DEVNULL,
             close_fds=True
         )
+        self._paused = False
+        self._current_rom = movie.target
 
     def _write_override_config(self):
         """Write a minimal RetroArch override config for this launch."""
@@ -128,8 +140,35 @@ class RetroArchPlayer:
         return OVERRIDE_CONFIG_PATH
 
     def pause(self):
-        """Pause not directly supported for emulator."""
-        pass
+        """Pause RetroArch without exiting so it can be resumed later."""
+        process = self._process
+        if process is None or self._paused:
+            return
+        try:
+            process.send_signal(signal.SIGSTOP)
+            self._paused = True
+        except Exception:
+            pass
+
+    def _resume(self):
+        """Resume RetroArch if it was previously paused."""
+        process = self._process
+        if process is None:
+            self._paused = False
+            return False
+        process.poll()
+        if process.returncode is not None:
+            self._process = None
+            self._paused = False
+            self._current_rom = None
+            return False
+        try:
+            process.send_signal(signal.SIGCONT)
+            self._paused = False
+            return True
+        except Exception:
+            self._paused = False
+            return False
 
     def sendKey(self, key: str):
         """Key sending not supported."""
@@ -141,6 +180,19 @@ class RetroArchPlayer:
         Called frequently in main loop - must be lightweight!
         Also returns True during startup grace period to prevent duplicate plays.
         """
+        if self._paused:
+            process = self._process
+            if process is None:
+                self._paused = False
+                self._current_rom = None
+                return False
+            process.poll()
+            if process.returncode is not None:
+                self._process = None
+                self._paused = False
+                self._current_rom = None
+            return False
+
         # During startup, return True to prevent duplicate play calls
         if time.time() - self._play_requested_time < 0.5:
             return True
@@ -155,6 +207,8 @@ class RetroArchPlayer:
         """Stop RetroArch. Non-blocking for fast channel switching."""
         # Reset play request time so new plays can happen immediately
         self._play_requested_time = 0
+        self._paused = False
+        self._current_rom = None
 
         # Blank console to hide TTY during transition
         _blank_console()
