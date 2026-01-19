@@ -142,7 +142,7 @@ class RetroArchPlayer:
         Also returns True during startup grace period to prevent duplicate plays.
         """
         # During startup, return True to prevent duplicate play calls
-        if time.time() - self._play_requested_time < 5.0:
+        if time.time() - self._play_requested_time < 0.5:
             return True
 
         process = self._process
