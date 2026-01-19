@@ -76,6 +76,9 @@ class RetroArchPlayer:
         if self.is_playing():
             if self._load_via_network(movie.target, movie.filename):
                 return  # Success - no need to restart
+            # Network command failed but process is still starting - don't restart
+            print('RetroArch: Ignoring play() during startup (network not ready)')
+            return
 
         # Fallback: kill and restart RetroArch
         self.stop()

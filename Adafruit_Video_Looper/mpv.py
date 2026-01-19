@@ -192,9 +192,14 @@ class MPVPlayer:
             seek_position: Seek to this position in seconds (for broadcast mode)
         """
         # Try IPC if mpv is already running (fast channel switching)
-        if self.is_playing() and self._ipc_sock:
-            if self._load_via_ipc(movie, seek_position):
-                return  # Success - no need to restart
+        if self.is_playing():
+            if self._ipc_sock:
+                if self._load_via_ipc(movie, seek_position):
+                    return  # Success - no need to restart
+            else:
+                # Process is starting but socket not ready yet - don't restart
+                print('MPV: Ignoring play() during startup (socket not ready)')
+                return
 
         # Fallback: kill and restart mpv
         self.stop()
