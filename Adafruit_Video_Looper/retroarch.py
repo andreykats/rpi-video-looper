@@ -156,6 +156,9 @@ class RetroArchPlayer:
             # Enable network commands for fast ROM switching
             'network_cmd_enable = "true"',
             'network_cmd_port = "{}"'.format(RETROARCH_CMD_PORT),
+            # Disable on-screen display notifications
+            'video_font_enable = "false"',
+            'onscreen_notifications_enable = "false"',
         ]
         with open(OVERRIDE_CONFIG_PATH, 'w') as handle:
             handle.write('\n'.join(lines) + '\n')
