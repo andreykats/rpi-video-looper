@@ -4,7 +4,6 @@ import time
 
 OVERRIDE_CONFIG_PATH = '/tmp/retroarch-video-looper.cfg'
 RETROARCH_CMD_PORT = 55355
-RETROARCH_STARTUP_GRACE_SEC = 3.0
 
 
 def _blank_console():
@@ -143,7 +142,7 @@ class RetroArchPlayer:
         Also returns True during startup grace period to prevent duplicate plays.
         """
         # During startup, return True to prevent duplicate play calls
-        if time.time() - self._play_requested_time < RETROARCH_STARTUP_GRACE_SEC:
+        if time.time() - self._play_requested_time < 2.0:
             return True
 
         process = self._process
