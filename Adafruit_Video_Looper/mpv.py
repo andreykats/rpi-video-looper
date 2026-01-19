@@ -221,7 +221,7 @@ class MPVPlayer:
 
         # Video stretch - ignore aspect ratio to fill screen (no black bars)
         if self._video_stretch:
-            args.extend(['--video-aspect-override=16:9'])
+            args.extend(['--video-aspect-override=4:3'])
 
         # Handle DRM connector if specified
         if self._drm_connector:
