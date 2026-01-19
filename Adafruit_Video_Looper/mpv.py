@@ -1,6 +1,7 @@
 # Copyright 2024
 # License: GNU GPLv2, see LICENSE.txt
 import os
+import select
 import subprocess
 import time
 import socket
@@ -92,6 +93,54 @@ class MPVPlayer:
         except (socket.error, OSError, BrokenPipeError):
             return False
 
+    def _send_ipc_command_verified(self, command, *args):
+        """Send command to mpv via IPC and verify response.
+
+        Returns True only if MPV confirms command was received and processed.
+        """
+        if self._ipc_sock is None:
+            return False
+        try:
+            msg = {"command": [command] + list(args)}
+            self._ipc_sock.send((json.dumps(msg) + '\n').encode())
+
+            # Read response with timeout (socket is non-blocking)
+            # Use select to wait for data with timeout
+            ready, _, _ = select.select([self._ipc_sock], [], [], 0.5)
+            if not ready:
+                print('MPV IPC: No response (timeout)')
+                return False
+
+            # Read response
+            response = b''
+            while True:
+                try:
+                    chunk = self._ipc_sock.recv(4096)
+                    if not chunk:
+                        break
+                    response += chunk
+                    if b'\n' in response:
+                        break
+                except (socket.error, BlockingIOError):
+                    break
+
+            if response:
+                try:
+                    result = json.loads(response.decode().strip().split('\n')[0])
+                    if 'error' in result and result['error'] == 'success':
+                        return True
+                    else:
+                        print('MPV IPC: Command error: {}'.format(result))
+                        return False
+                except json.JSONDecodeError:
+                    print('MPV IPC: Invalid response')
+                    return False
+            return False
+        except (socket.error, OSError, BrokenPipeError) as e:
+            print('MPV IPC: Socket error: {}'.format(e))
+            self._ipc_sock = None  # Mark socket as dead
+            return False
+
     def _load_via_ipc(self, movie, seek_position=None):
         """Load new video via IPC without restarting mpv.
 
@@ -103,14 +152,17 @@ class MPVPlayer:
             if seek_position and seek_position > 0:
                 # With seek position: loadfile path replace start=N
                 options = 'start={}'.format(int(seek_position))
-                success = self._send_ipc_command('loadfile', movie.target, 'replace', options)
+                success = self._send_ipc_command_verified('loadfile', movie.target, 'replace', options)
             else:
-                success = self._send_ipc_command('loadfile', movie.target, 'replace')
+                success = self._send_ipc_command_verified('loadfile', movie.target, 'replace')
 
             if success:
                 print('MPV: Loaded {} via IPC'.format(movie.filename))
+            else:
+                print('MPV: IPC load failed, will restart')
             return success
-        except Exception:
+        except Exception as e:
+            print('MPV: IPC exception: {}'.format(e))
             return False
 
     def play(self, movie, loop=None, vol=0, seek_position=None):
