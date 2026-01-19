@@ -102,10 +102,12 @@ class RetroArchPlayer:
 
         print("RetroArch command: {}".format(' '.join(args)))
 
+        # Capture stderr to file for debugging
+        stderr_file = open('/tmp/retroarch-stderr.log', 'w')
         self._process = subprocess.Popen(
             args,
             stdout=subprocess.DEVNULL,
-            stderr=None,  # Show errors for debugging
+            stderr=stderr_file,
             stdin=subprocess.DEVNULL,
             close_fds=True
         )
