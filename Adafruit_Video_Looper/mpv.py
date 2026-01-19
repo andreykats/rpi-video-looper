@@ -39,6 +39,7 @@ class MPVPlayer:
         self._sound = config.get('mpv', 'sound').lower()
         self._hwdec = config.get('mpv', 'hwdec', fallback='auto')
         self._drm_connector = config.get('mpv', 'drm_connector', fallback='')
+        self._video_stretch = config.getboolean('mpv', 'video_stretch', fallback=False)
 
     def supported_extensions(self):
         """Return list of supported file extensions."""
@@ -217,7 +218,10 @@ class MPVPlayer:
         args.extend(['--no-osc'])
         args.extend(['--no-input-default-bindings'])
         args.extend(['--keep-open=no'])
-        # args.extend(['--video-aspect-override=no'])  # Stretch to fill (like omxplayer)
+
+        # Video stretch - ignore aspect ratio to fill screen (no black bars)
+        if self._video_stretch:
+            args.extend(['--video-aspect-override=no'])
 
         # Handle DRM connector if specified
         if self._drm_connector:
