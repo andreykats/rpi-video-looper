@@ -3,7 +3,6 @@
 import os
 import select
 import subprocess
-import threading
 import time
 import socket
 import json
@@ -263,9 +262,9 @@ class MPVPlayer:
             close_fds=True
         )
 
-        # Connect to IPC socket in background (non-blocking)
-        # Playback starts immediately; IPC is only needed for future channel switches
-        threading.Thread(target=self._connect_ipc, args=(2.0,), daemon=True).start()
+        # Connect to IPC socket (non-blocking, best effort)
+        # Playback starts even if IPC connection fails
+        self._connect_ipc(timeout=1.0)
 
     def pause(self):
         """Toggle pause/resume."""
