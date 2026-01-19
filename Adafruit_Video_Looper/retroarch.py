@@ -1,5 +1,6 @@
 import socket
 import subprocess
+import time
 
 OVERRIDE_CONFIG_PATH = '/tmp/retroarch-video-looper.cfg'
 RETROARCH_CMD_PORT = 55355
@@ -22,6 +23,7 @@ class RetroArchPlayer:
     def __init__(self, config):
         """Create an instance of a player that runs RetroArch in the background."""
         self._process = None
+        self._play_requested_time = 0  # Prevent duplicate plays during startup
         self._load_config(config)
 
     def _load_config(self, config):
@@ -78,6 +80,9 @@ class RetroArchPlayer:
         # Fallback: kill and restart RetroArch
         self.stop()
 
+        # Mark play as requested to prevent duplicate calls during startup
+        self._play_requested_time = time.time()
+
         if not self._core_path:
             print("RetroArch error: core_path is not set in [retroarch].")
             return
@@ -131,7 +136,12 @@ class RetroArchPlayer:
         """Return true if RetroArch is running, false otherwise.
 
         Called frequently in main loop - must be lightweight!
+        Also returns True during startup grace period to prevent duplicate plays.
         """
+        # During startup, return True to prevent duplicate play calls
+        if time.time() - self._play_requested_time < 2.0:
+            return True
+
         process = self._process
         if process is None:
             return False
@@ -140,6 +150,9 @@ class RetroArchPlayer:
 
     def stop(self, block_timeout_sec=0):
         """Stop RetroArch. Non-blocking for fast channel switching."""
+        # Reset play request time so new plays can happen immediately
+        self._play_requested_time = 0
+
         # Blank console to hide TTY during transition
         _blank_console()
 

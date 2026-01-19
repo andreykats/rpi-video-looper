@@ -162,11 +162,14 @@ class MPVPlayer:
         """
         try:
             # Use loadfile command to replace current video
-            # Format: loadfile <path> [replace|append] [options]
+            # MPV JSON IPC format: loadfile <url> [<flags> [<index> [<options>]]]
+            # Options must be a dict, not a string
             if seek_position and seek_position > 0:
-                # With seek position: loadfile path replace start=N
-                options = 'start={}'.format(int(seek_position))
-                success = self._send_ipc_command_verified('loadfile', movie.target, 'replace', options)
+                # With seek position: pass options as dict with index=-1
+                success = self._send_ipc_command_verified(
+                    'loadfile', movie.target, 'replace', -1,
+                    {'start': str(int(seek_position))}
+                )
             else:
                 success = self._send_ipc_command_verified('loadfile', movie.target, 'replace')
 
