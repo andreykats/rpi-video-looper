@@ -158,6 +158,10 @@ class RetroArchPlayer:
 
     def stop(self, block_timeout_sec=0):
         """Stop RetroArch. Non-blocking for fast channel switching."""
+        import traceback
+        print("RetroArch stop() called from:")
+        traceback.print_stack()
+
         # Reset play request time so new plays can happen immediately
         self._play_requested_time = 0
 
