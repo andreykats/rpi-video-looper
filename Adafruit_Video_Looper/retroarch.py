@@ -105,7 +105,7 @@ class RetroArchPlayer:
         self._process = subprocess.Popen(
             args,
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stderr=None,  # Show errors for debugging
             stdin=subprocess.DEVNULL,
             close_fds=True
         )
@@ -142,7 +142,7 @@ class RetroArchPlayer:
         Also returns True during startup grace period to prevent duplicate plays.
         """
         # During startup, return True to prevent duplicate play calls
-        if time.time() - self._play_requested_time < 0.5:
+        if time.time() - self._play_requested_time < 2.0:
             return True
 
         process = self._process
