@@ -144,13 +144,16 @@ class RetroArchPlayer:
         Also returns True during startup grace period to prevent duplicate plays.
         """
         # During startup, return True to prevent duplicate play calls
-        if time.time() - self._play_requested_time < 2.0:
+        grace_remaining = 2.0 - (time.time() - self._play_requested_time)
+        if grace_remaining > 0:
             return True
 
         process = self._process
         if process is None:
             return False
         process.poll()
+        if process.returncode is not None:
+            print(f"RetroArch exited with code: {process.returncode}")
         return process.returncode is None
 
     def stop(self, block_timeout_sec=0):
