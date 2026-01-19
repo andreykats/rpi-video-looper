@@ -67,20 +67,28 @@ class RetroArchPlayer:
         except Exception:
             return False
 
+    def _in_grace_period(self):
+        """Check if we're still in the startup grace period."""
+        return time.time() - self._play_requested_time < 2.0
+
     def play(self, movie, loop=None, vol=0, seek_position=None):
         """Start RetroArch with the provided ROM file.
 
         Note: loop, vol, and seek_position are ignored for ROMs.
         """
+        # During grace period, don't try to restart or send commands
+        if self._in_grace_period():
+            print('RetroArch: Ignoring play() during startup grace period')
+            return
+
         # Try network command if RetroArch is already running (fast ROM switching)
         if self.is_playing():
             if self._load_via_network(movie.target, movie.filename):
                 return  # Success - no need to restart
-            # Network command failed but process is still starting - don't restart
-            print('RetroArch: Ignoring play() during startup (network not ready)')
-            return
+            # Network command failed - fall through to kill and restart
+            print('RetroArch: Network command failed, will restart')
 
-        # Fallback: kill and restart RetroArch
+        # Kill and restart RetroArch
         self.stop()
 
         # Mark play as requested to prevent duplicate calls during startup
