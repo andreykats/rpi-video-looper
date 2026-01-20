@@ -261,8 +261,9 @@ class ProcessManager:
 
         # If switching to a different player type, stop the old one first
         # Same-player-type transitions are handled by the player's IPC (fast)
+        # Use non-blocking stop since we're switching to a different player
         if self._active_player is not None and self._active_player != player:
-            self._active_player.stop()
+            self._active_player.stop(block=False)
 
         # Only pass seek_offset for video content
         if movie.content_type == 'video' and seek_offset:

@@ -191,18 +191,30 @@ class RetroArchPlayer:
             print(f"RetroArch exited with code: {process.returncode}")
         return process.returncode is None
 
-    def stop(self, block_timeout_sec=0):
-        """Stop RetroArch."""
+    def stop(self, block=True):
+        """Stop RetroArch.
+
+        Args:
+            block: If True (default), wait for pkill to complete. Required when
+                   restarting RetroArch to avoid race condition. Set False when
+                   switching to a different player type for faster transition.
+        """
         # Reset play request time so new plays can happen immediately
         self._play_requested_time = 0
 
         # Blank console to hide TTY during transition
         _blank_console()
 
-        # Kill all retroarch processes - MUST be blocking to avoid race condition
-        # where pkill kills the newly started retroarch
-        subprocess.run(['pkill', '-9', 'retroarch'],
-                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        # Kill all retroarch processes
+        if block:
+            # Blocking - required when restarting RetroArch to avoid pkill
+            # killing the newly started process
+            subprocess.run(['pkill', '-9', 'retroarch'],
+                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        else:
+            # Non-blocking - safe when switching to a different player
+            subprocess.Popen(['pkill', '-9', 'retroarch'],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self._process = None
 
     @staticmethod

@@ -298,8 +298,8 @@ class MPVPlayer:
         process.poll()
         return process.returncode is None
 
-    def stop(self):
-        """Stop the video player. Non-blocking for fast channel switching."""
+    def stop(self, block=True):
+        """Stop the video player. Always non-blocking for fast channel switching."""
         # Reset play request time so new plays can happen immediately
         self._play_requested_time = 0
 
