@@ -46,6 +46,17 @@ echo "========================="
 raspi-config nonint do_i2c 0
 
 echo ""
+echo "Enabling DRM/KMS display driver..."
+echo "==================================="
+# Add vc4-kms-v3d overlay if not already present
+if ! grep -q "^dtoverlay=vc4-kms-v3d" /boot/config.txt; then
+    echo "dtoverlay=vc4-kms-v3d" >> /boot/config.txt
+    echo "Added dtoverlay=vc4-kms-v3d to /boot/config.txt"
+else
+    echo "dtoverlay=vc4-kms-v3d already enabled"
+fi
+
+echo ""
 echo "Configuring video_looper to run on start..."
 echo "============================================"
 service supervisor restart
@@ -53,9 +64,6 @@ service supervisor restart
 echo ""
 echo "=========================================="
 echo "Installation complete!"
-echo ""
-echo "IMPORTANT: Ensure /boot/config.txt contains:"
-echo "  dtoverlay=vc4-kms-v3d"
 echo ""
 echo "Reboot for all changes to take effect."
 echo "=========================================="
