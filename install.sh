@@ -9,47 +9,53 @@ if [ "$(id -u)" != "0" ]; then
   exit 1
 fi
 
+echo "Installing system dependencies..."
+echo "================================="
+apt update && apt -y install \
+    python3 python3-pip supervisor ntfs-3g exfat-fuse \
+    mpv retroarch retroarch-assets libretro-nestopia ffmpeg \
+    make gcc g++ python3-dev build-essential \
+    i2c-tools python3-smbus
 
-echo "Installing dependencies..."
-echo "=========================="
-apt update && apt -y install python3 python3-pip python3-pygame supervisor omxplayer ntfs-3g exfat-fuse
+echo ""
+echo "Installing Python dependencies..."
+echo "================================="
+pip3 install setuptools wheel
+pip3 install -r "$(dirname "$0")/requirements.txt"
 
-# if [ "$*" != "no_hello_video" ]
-# then
-# 	echo "Installing hello_video..."
-# 	echo "========================="
-# 	apt -y install git build-essential python3-dev
-# 	git clone https://github.com/adafruit/pi_hello_video
-# 	cd pi_hello_video
-# 	./rebuild.sh
-# 	cd hello_video
-# 	make install
-# 	cd ../..
-# 	rm -rf pi_hello_video
-# else
-#     echo "hello_video was not installed"
-#     echo "=========================="
-# fi
-
+echo ""
 echo "Installing video_looper program..."
-echo "=================================="
+echo "==================================="
 
-# change the directoy to the script location
+# Change the directory to the script location
 cd "$(dirname "$0")"
 
-mkdir -p /mnt/usbdrive0 # This is very important if you put your system in readonly after
-mkdir -p /home/pi/video # create default video directory
+pip3 install .
 
-pip3 install setuptools
-python3 setup.py install --force
+# Create required directories
+mkdir -p /mnt/usbdrive0
+mkdir -p /home/pi/video
 
+# Copy configuration files
 cp ./assets/video_looper.ini /boot/video_looper.ini
-
-echo "Configuring video_looper to run on start..."
-echo "==========================================="
-
 cp ./assets/video_looper.conf /etc/supervisor/conf.d/
 
+echo ""
+echo "Enabling I2C interface..."
+echo "========================="
+raspi-config nonint do_i2c 0
+
+echo ""
+echo "Configuring video_looper to run on start..."
+echo "============================================"
 service supervisor restart
 
-echo "Finished!"
+echo ""
+echo "=========================================="
+echo "Installation complete!"
+echo ""
+echo "IMPORTANT: Ensure /boot/config.txt contains:"
+echo "  dtoverlay=vc4-kms-v3d"
+echo ""
+echo "Reboot for all changes to take effect."
+echo "=========================================="
