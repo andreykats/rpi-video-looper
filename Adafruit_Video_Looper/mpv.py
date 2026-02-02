@@ -198,9 +198,12 @@ class MPVPlayer:
                 if self._load_via_ipc(movie, seek_position):
                     return  # Success - no need to restart
             else:
-                # Process is starting but socket not ready yet - don't restart
-                print('MPV: Ignoring play() during startup (socket not ready)')
-                return
+                # Socket not ready - try to connect (process may have created it late)
+                if self._connect_ipc(timeout=0.5):
+                    if self._load_via_ipc(movie, seek_position):
+                        return  # Success after reconnect
+                # Socket still not available - fall through to kill and restart
+                print('MPV: Socket not available, restarting player')
 
         # Fallback: kill and restart mpv
         self.stop()
