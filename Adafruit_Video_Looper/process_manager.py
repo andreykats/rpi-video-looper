@@ -277,6 +277,16 @@ class ProcessManager:
         """Main program loop."""
         self._playlist = self._build_playlist()
 
+        # Read the encoder synchronously so the initial movie matches the
+        # actual hardware position. Without this, the main thread can race
+        # the switcher daemon: main plays the default channel (e.g. 2/NES)
+        # while the switcher reads channel 8/MPV — whichever finishes last
+        # owns DRM, and the system can stick on the wrong player.
+        initial = self._channel_switcher.read_remote_rotary_encoder()
+        if 1 <= initial <= 13:
+            self._current_channel = initial
+            self._channel_switcher.previous_channel = initial
+
         # Get initial movie
         if self._broadcast_manager is not None:
             self._print("Starting broadcast TV mode")
