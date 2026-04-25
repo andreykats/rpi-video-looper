@@ -1,4 +1,6 @@
-# RPI Video Looper - Claude Reference
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Project Summary
 A Raspberry Pi video looper for **retro TV simulation**. Based on Adafruit Video Looper, heavily customized with:
@@ -9,6 +11,46 @@ A Raspberry Pi video looper for **retro TV simulation**. Based on Adafruit Video
 
 **Target Hardware**: Raspberry Pi 5 (runs on remote Pi, NOT this development machine)
 **OS**: DietPi (requires `dtoverlay=vc4-kms-v3d` in `/boot/config.txt` for DRM/KMS)
+
+> `README.md` is upstream Adafruit `pi_video_looper` documentation and is **outdated** (references omxplayer, no mention of MPV / RetroArch / broadcast mode / rotary encoder). Treat this CLAUDE.md as the source of truth.
+
+## Commands
+
+Everything below runs **on the Pi**, not on the development machine.
+
+### SSH into the Pi
+```bash
+ssh root@192.168.1.195
+```
+
+### Install
+```bash
+sudo ./install.sh
+```
+Installs system packages (`mpv`, `retroarch`, `libretro-nestopia`, `i2c-tools`, `python3-smbus`), Python deps via `pip3 install .`, registers the supervisor config, copies the default config to `/boot/video_looper.ini`, and ensures I2C and `dtoverlay=vc4-kms-v3d` are enabled.
+
+### Run / control
+```bash
+./run.sh                                  # foreground run (debugging) — calls process_manager directly
+sudo ./enable.sh                          # supervisor autostart on
+sudo ./disable.sh                         # supervisor autostart off
+sudo ./reload.sh                          # supervisorctl restart video_looper
+sudo supervisorctl tail -f video_looper   # live logs
+```
+
+### Deploying code changes to the Pi
+Always deploy via git, never `scp` into the Pi's working tree:
+1. Edit and commit locally
+2. `git push origin <branch>`
+3. On the Pi: `git pull` in `/root/rpi-channel-surfer`
+4. `sudo supervisorctl restart video_looper`
+
+`scp` works mechanically but leaves the Pi's working tree dirty, has no history, and a future `git pull` will refuse to merge or clobber the changes. Commit + push + pull keeps the Pi reproducible. The Pi runs **dropbear**, not OpenSSH, so `scp` requires the legacy `-O` flag — another reason to avoid it.
+
+Supervisor config lives at `assets/video_looper.conf` and is installed to `/etc/supervisor/conf.d/video_looper.conf` by `install.sh`.
+
+### Tests
+This project has **no test suite** — no pytest, unittest, or `tests/` directory. Verification is done on-device.
 
 ## Key Files
 
@@ -22,7 +64,10 @@ A Raspberry Pi video looper for **retro TV simulation**. Based on Adafruit Video
 | `Adafruit_Video_Looper/usb_drive.py` | USB drive file reader with pyudev monitoring |
 | `Adafruit_Video_Looper/directory.py` | Local directory file reader |
 | `assets/video_looper.ini` | Default configuration template |
+| `assets/video_looper.conf` | Supervisor program definition (installed to `/etc/supervisor/conf.d/`) |
 | `/boot/video_looper.ini` | **Runtime config location** (on Pi) |
+| `install.sh` | One-shot Pi setup — system pkgs, pip install, supervisor, I2C, DRM overlay |
+| `run.sh` / `enable.sh` / `disable.sh` / `reload.sh` | Foreground run / supervisor autostart toggles / restart |
 
 ## Two Operating Modes
 
@@ -39,6 +84,8 @@ A Raspberry Pi video looper for **retro TV simulation**. Based on Adafruit Video
 - Sequential or random playback
 
 ## Players
+
+`ProcessManager` picks a player per file by extension: video (`avi, mov, mkv, mp4, m4v, webm, flv, ts`) → MPV; NES (`nes, fds, nsf`) → RetroArch. Extension lists are configurable in `[mpv]` / `[retroarch]` sections of `video_looper.ini`.
 
 ### MPVPlayer (mpv.py)
 Video playback using MPV with DRM/KMS output:
@@ -72,6 +119,7 @@ network_cmd_port = "55355"
 - Sends channel (0-13) over **I2C bus** at address `0x8`
 - Channel 0 = dead zone (ignored)
 - `ChannelSwitcher` class polls I2C continuously
+- Startup default channel is **2** (`process_manager.py`, `self._current_channel = 2`)
 
 ### GPIO Relays (RF Modulator Control)
 | GPIO Pin | Purpose |
@@ -123,13 +171,16 @@ Video sequencing:
 
 ## Entry Points
 
-```bash
-# Start the process manager
-python3 -m Adafruit_Video_Looper.process_manager
+The single entry point is `Adafruit_Video_Looper.process_manager`:
 
-# Or with custom config
+```bash
+python3 -m Adafruit_Video_Looper.process_manager                    # default /boot/video_looper.ini
 python3 -m Adafruit_Video_Looper.process_manager /path/to/config.ini
 ```
+
+This is what `run.sh` calls.
+
+The supervisor config (`assets/video_looper.conf`) currently runs `python3 -u -m Adafruit_Video_Looper.video_looper`, but no `video_looper.py` exists in `Adafruit_Video_Looper/` — only `process_manager.py`. If autostart is broken on the Pi, the supervisor command likely needs updating to `Adafruit_Video_Looper.process_manager`.
 
 ## Configuration (video_looper.ini)
 
