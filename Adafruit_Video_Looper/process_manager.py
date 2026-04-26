@@ -1,6 +1,7 @@
 import configparser
 import importlib
 import os
+import queue
 import re
 import subprocess
 import sys
@@ -63,8 +64,18 @@ class ProcessManager:
         self._sound_vol = 0
         self._sound_vol_file = self._config.get('mpv', 'sound_vol_file', fallback='')
 
+        # Channel-change pipeline. The I2C polling thread inside ChannelSwitcher
+        # publishes to this queue and returns to polling immediately; the worker
+        # below drains it and runs the (potentially slow) player operations.
+        # Keeps encoder reads from blocking on MPV/RetroArch startup.
+        self._channel_queue = queue.Queue()
+        self._channel_worker_thread = threading.Thread(
+            target=self._channel_worker,
+            daemon=True
+        )
+
         # Initialize channel switcher (starts after playlist is built)
-        self._channel_switcher = ChannelSwitcher(self._handle_channel_change)
+        self._channel_switcher = ChannelSwitcher(self._publish_channel_change)
         self._channel_switcher_thread = threading.Thread(
             target=self._channel_switcher.start,
             daemon=True
@@ -221,6 +232,23 @@ class ProcessManager:
         manager.set_default_playlist(Playlist([]))
         return manager
 
+    def _publish_channel_change(self, channel, previous_channel):
+        """Called from the I2C polling thread. Hands off to the worker so the
+        encoder can keep being read while the player swaps."""
+        self._channel_queue.put((channel, previous_channel))
+
+    def _channel_worker(self):
+        """Drain channel-change requests in FIFO order on a dedicated thread."""
+        while self._running:
+            try:
+                channel, previous_channel = self._channel_queue.get(timeout=0.2)
+            except queue.Empty:
+                continue
+            try:
+                self._handle_channel_change(channel, previous_channel)
+            except Exception as e:
+                self._print(f"Channel worker error: {e}")
+
     def _handle_channel_change(self, channel, previous_channel):
         """Handle rotary encoder channel changes."""
         if not self._running:
@@ -295,7 +323,9 @@ class ProcessManager:
             movie = self._playlist.get_next(self._is_random) if self._playlist else None
             seek_offset = None
 
-        # Start channel switcher thread
+        # Start channel worker before switcher so the consumer is ready
+        # before the producer can publish.
+        self._channel_worker_thread.start()
         self._channel_switcher_thread.start()
 
         while self._running:

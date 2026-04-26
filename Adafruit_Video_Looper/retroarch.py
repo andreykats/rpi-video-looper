@@ -202,7 +202,7 @@ class RetroArchPlayer:
         if process is not None:
             try:
                 process.kill()
-                process.wait(timeout=2)
+                process.wait(timeout=0.2)
             except Exception:
                 pass
 

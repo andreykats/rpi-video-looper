@@ -110,7 +110,7 @@ class MPVPlayer:
 
             # Read responses until we get command result (skip async events)
             # MPV events have 'event' key, command responses have 'error' key
-            deadline = time.time() + 0.5
+            deadline = time.time() + 0.1
             buffer = b''
 
             while time.time() < deadline:
@@ -265,9 +265,9 @@ class MPVPlayer:
             close_fds=True
         )
 
-        # Connect to IPC socket (non-blocking, best effort)
-        # Playback starts even if IPC connection fails
-        self._connect_ipc(timeout=1.0)
+        # IPC socket is connected lazily on first use (see _load_via_ipc /
+        # reconnect path). Skipping the synchronous wait here keeps the worker
+        # responsive to the next queued channel change.
 
     def pause(self):
         """Toggle pause/resume."""
