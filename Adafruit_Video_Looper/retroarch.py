@@ -43,6 +43,7 @@ class RetroArchPlayer:
         self._audio_enable = config.getboolean('retroarch', 'audio_enable', fallback=True)
         self._autosave_interval = config.getint('retroarch', 'autosave_interval', fallback=0)
         self._savestate_auto_load = config.getboolean('retroarch', 'savestate_auto_load', fallback=True)
+        self._verbose = config.getboolean('retroarch', 'verbose', fallback=False)
         self._extra_args = config.get('retroarch', 'extra_args', fallback='').split()
 
     def supported_extensions(self):
@@ -109,6 +110,9 @@ class RetroArchPlayer:
 
         args.extend(['-L', self._core_path])
 
+        if self._verbose:
+            args.append('-v')
+
         if self._extra_args:
             args.extend(self._extra_args)
 
@@ -116,7 +120,6 @@ class RetroArchPlayer:
 
         print("RetroArch command: {}".format(' '.join(args)))
 
-        # Capture stderr to file for debugging
         stderr_file = open('/tmp/retroarch-stderr.log', 'w')
 
         # RetroArch's KMS/GL init uses XDG_RUNTIME_DIR for runtime sockets;
@@ -126,14 +129,17 @@ class RetroArchPlayer:
         env = os.environ.copy()
         env.setdefault('XDG_RUNTIME_DIR', '/run/user/{0}'.format(os.geteuid()))
 
-        self._process = subprocess.Popen(
-            args,
-            stdout=subprocess.DEVNULL,
-            stderr=stderr_file,
-            stdin=subprocess.DEVNULL,
-            close_fds=True,
-            env=env,
-        )
+        try:
+            self._process = subprocess.Popen(
+                args,
+                stdout=subprocess.DEVNULL,
+                stderr=stderr_file,
+                stdin=subprocess.DEVNULL,
+                close_fds=True,
+                env=env,
+            )
+        finally:
+            stderr_file.close()
 
     def _write_override_config(self):
         """Write a minimal RetroArch override config for this launch."""
@@ -170,6 +176,17 @@ class RetroArchPlayer:
             'video_font_enable = "false"',
             'onscreen_notifications_enable = "false"',
         ]
+        if self._verbose:
+            # RetroArch's own logger fflushes; capturing the child's stderr
+            # to a Python file loses output if RetroArch dies before flushing.
+            lines.extend([
+                'log_verbosity = "true"',
+                'log_to_file = "true"',
+                'log_to_file_timestamp = "false"',
+                'log_dir = "/tmp"',
+                'frontend_log_level = "0"',
+                'libretro_log_level = "0"',
+            ])
         with open(OVERRIDE_CONFIG_PATH, 'w') as handle:
             handle.write('\n'.join(lines) + '\n')
         return OVERRIDE_CONFIG_PATH
