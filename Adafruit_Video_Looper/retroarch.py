@@ -1,3 +1,4 @@
+import os
 import socket
 import subprocess
 import time
@@ -117,12 +118,21 @@ class RetroArchPlayer:
 
         # Capture stderr to file for debugging
         stderr_file = open('/tmp/retroarch-stderr.log', 'w')
+
+        # RetroArch's KMS/GL init uses XDG_RUNTIME_DIR for runtime sockets;
+        # supervisor's environment doesn't include it, and relying on
+        # os.environ propagation has proven unreliable here. Pass an
+        # explicit env that includes it.
+        env = os.environ.copy()
+        env.setdefault('XDG_RUNTIME_DIR', '/run/user/{0}'.format(os.geteuid()))
+
         self._process = subprocess.Popen(
             args,
             stdout=subprocess.DEVNULL,
             stderr=stderr_file,
             stdin=subprocess.DEVNULL,
-            close_fds=True
+            close_fds=True,
+            env=env,
         )
 
     def _write_override_config(self):

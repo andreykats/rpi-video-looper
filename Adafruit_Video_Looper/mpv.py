@@ -268,13 +268,20 @@ class MPVPlayer:
         # Debug: print the command being run
         print("MPV command: {}".format(' '.join(args)))
 
+        # MPV's audio backends and DRM context use XDG_RUNTIME_DIR for
+        # runtime sockets; supervisor's environment doesn't include it.
+        # Pass an explicit env so the value is guaranteed to reach the child.
+        env = os.environ.copy()
+        env.setdefault('XDG_RUNTIME_DIR', '/run/user/{0}'.format(os.geteuid()))
+
         # Start mpv process (show stderr for debugging)
         self._process = subprocess.Popen(
             args,
             stdout=subprocess.DEVNULL,
             stderr=None,  # Show errors for debugging
             stdin=subprocess.DEVNULL,
-            close_fds=True
+            close_fds=True,
+            env=env,
         )
 
         # IPC socket is connected lazily on first use (see _load_via_ipc /
