@@ -388,9 +388,30 @@ class ProcessManager:
         self.quit()
 
 
+def _ensure_xdg_runtime_dir():
+    """Make sure XDG_RUNTIME_DIR points at an existing directory.
+
+    Supervisor launches the looper with no login session, so systemd-logind
+    has never created /run/user/<uid>. RetroArch's KMS context handoff
+    refuses to start without XDG_RUNTIME_DIR, and several audio backends
+    use it for socket paths. Provide one ourselves and inherit it into
+    every subprocess (mpv, retroarch, ...) via the default Popen env.
+    """
+    runtime_dir = os.environ.get('XDG_RUNTIME_DIR')
+    if not runtime_dir:
+        runtime_dir = '/run/user/{0}'.format(os.geteuid())
+        os.environ['XDG_RUNTIME_DIR'] = runtime_dir
+    try:
+        os.makedirs(runtime_dir, mode=0o700, exist_ok=True)
+        os.chmod(runtime_dir, 0o700)
+    except OSError as e:
+        print('Warning: could not prepare XDG_RUNTIME_DIR={0}: {1}'.format(runtime_dir, e))
+
+
 # Main entry point
 if __name__ == '__main__':
     print('Starting Process Manager.')
+    _ensure_xdg_runtime_dir()
     config_path = '/boot/video_looper.ini'
     if len(sys.argv) == 2:
         config_path = sys.argv[1]
