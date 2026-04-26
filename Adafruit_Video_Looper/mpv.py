@@ -222,6 +222,18 @@ class MPVPlayer:
         args.extend(['--no-input-default-bindings'])
         args.extend(['--keep-open=no'])
 
+        # Force ALSA when the config selects an HDMI/local/alsa output. mpv's
+        # default autodetection probes PipeWire and JACK first; on this Pi
+        # neither is running, and PipeWire's failure path can wedge the ALSA
+        # device in EOWNERDEAD until reboot. Going straight to ALSA avoids it.
+        if self._sound in ('hdmi', 'local', 'alsa'):
+            args.extend(['--ao=alsa'])
+
+        # If audio init still fails for any reason, fall back to silent
+        # playback instead of exiting — keeps the looper from spinning on a
+        # transient audio problem.
+        args.extend(['--audio-fallback-to-null=yes'])
+
         # Video stretch - ignore aspect ratio to fill screen (no black bars)
         if self._video_stretch:
             args.extend(['--no-keepaspect'])
