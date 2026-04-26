@@ -50,15 +50,24 @@ Always deploy via git, never `scp` into the Pi's working tree:
 Supervisor config lives at `assets/video_looper.conf` and is installed to `/etc/supervisor/conf.d/video_looper.conf` by `install.sh`.
 
 ### Tests
-This project has **no test suite** — no pytest, unittest, or `tests/` directory. Verification is done on-device.
+There is no pytest/unittest suite, but there is a scenario-driven harness under `tools/` that runs against a live looper on the Pi:
+
+- `[encoder] backend = mock` in `/boot/video_looper.ini` makes the looper read channel numbers from `/tmp/mock_encoder.fifo` instead of I2C. The looper auto-creates the FIFO on init.
+- `python3 tools/scenario_runner.py tools/scenarios/<name>.txt` writes channel numbers to the FIFO at scheduled deltas. Honors `# setup: reset-state` directives by deleting `/var/lib/video_looper/previous_values.pkl` before the run.
+- `python3 tools/verify_run.py tools/scenarios/<name>.txt` parses `/tmp/video_looper.log` and runs the `# expect:` / `# expect-fail:` predicates declared in the scenario header. Predicates: `no-double-spawn`, `cleanup-{strict,final-player}`, `relay-pulses-{band|up|down}=N`, `unmapped-no-relay channel=N`, `coalesce window=Ts max-launches=K`.
+- **Always restore `backend = i2c` and restart the looper afterwards** — otherwise the physical encoder is dead. A wrapper script `tools/test-on-pi.sh` is on the way (scheduled agent) to automate the flip.
+
+Five scenarios live under `tools/scenarios/`: `slow`, `rapid_spin`, `cross_band`, `unmapped_channel`, `eov_during_change`.
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `Adafruit_Video_Looper/process_manager.py` | Main orchestrator - `ProcessManager` class, main loop, playlist building |
+| `Adafruit_Video_Looper/process_manager.py` | Main orchestrator — `ProcessManager`, main loop, playlist build, two intent slots, `_channel_worker` (sole player launcher) |
 | `Adafruit_Video_Looper/model.py` | Data models: `Movie`, `Playlist`, `BroadcastChannelManager` |
-| `Adafruit_Video_Looper/rotary.py` | `ChannelSwitcher` class, relay control, I2C communication |
+| `Adafruit_Video_Looper/rotary.py` | `ChannelSwitcher` — encoder polling, relay executor (consumes `_relay_target_slot`), GPIO output |
+| `Adafruit_Video_Looper/encoder.py` | `EncoderBackend` interface + `I2CEncoderBackend` (lazy `smbus`) + `MockEncoderBackend` (FIFO-driven) |
+| `Adafruit_Video_Looper/latest_slot.py` | `LatestSlot` — single-value publisher with optional shared wake event; replaces queue.Queue patterns |
 | `Adafruit_Video_Looper/mpv.py` | MPV video player wrapper (DRM output, IPC for fast switching) |
 | `Adafruit_Video_Looper/retroarch.py` | RetroArch emulator wrapper (NES ROMs via Nestopia core) |
 | `Adafruit_Video_Looper/usb_drive.py` | USB drive file reader with pyudev monitoring |
@@ -66,8 +75,13 @@ This project has **no test suite** — no pytest, unittest, or `tests/` director
 | `assets/video_looper.ini` | Default configuration template |
 | `assets/video_looper.conf` | Supervisor program definition (installed to `/etc/supervisor/conf.d/`) |
 | `/boot/video_looper.ini` | **Runtime config location** (on Pi) |
-| `install.sh` | One-shot Pi setup — system pkgs, pip install, supervisor, I2C, DRM overlay |
+| `/tmp/video_looper.log` | Structured log (truncated each run) — fed to `tools/verify_run.py` |
+| `/var/lib/video_looper/previous_values.pkl` | Persisted band + per-band frequency state |
+| `install.sh` | One-shot Pi setup — system pkgs, pip install, supervisor, I2C, DRM overlay, state dir |
 | `run.sh` / `enable.sh` / `disable.sh` / `reload.sh` | Foreground run / supervisor autostart toggles / restart |
+| `tools/scenario_runner.py` | Drives the mock encoder FIFO from a scenario file |
+| `tools/verify_run.py` | Generic predicate engine; reads `/tmp/video_looper.log` and asserts `# expect:` headers |
+| `tools/scenarios/*.txt` | Scenario files with `# setup:` and `# expect:` headers |
 
 ## Two Operating Modes
 
@@ -101,6 +115,7 @@ NES emulation using RetroArch:
 - UDP network commands (port 55355) for ROM switching
 - 2-second startup grace period
 - **Critical**: `stop()` must use blocking `subprocess.run()` (not `Popen`) to avoid race condition where pkill kills newly-started process
+- `pkill` is PID-scoped (`pkill -P <looper_pid>`) so unrelated retroarch processes on the box aren't disturbed
 
 Config written to `/tmp/retroarch-video-looper.cfg`:
 ```ini
@@ -118,8 +133,8 @@ network_cmd_port = "55355"
 - **Arduino** reads physical rotary encoder
 - Sends channel (0-13) over **I2C bus** at address `0x8`
 - Channel 0 = dead zone (ignored)
-- `ChannelSwitcher` class polls I2C continuously
-- Startup default channel is **2** (`process_manager.py`, `self._current_channel = 2`)
+- `ChannelSwitcher` polls via an `EncoderBackend` (I2C in production, FIFO-backed mock in tests). Backend selected by `[encoder] backend = i2c|mock`.
+- Startup default channel is **2** but `run()` reads the encoder synchronously before threads start, so the actual initial channel matches the dial position.
 
 ### GPIO Relays (RF Modulator Control)
 | GPIO Pin | Purpose |
@@ -128,9 +143,10 @@ network_cmd_port = "55355"
 | 22 | Frequency DOWN relay |
 | 27 | Frequency UP relay |
 
-- **Active-HIGH** logic
-- Thread-safe queue with 30ms delays between pulses
-- State persisted to `previous_values.pkl`
+- **Active-HIGH** logic; pulse width 30 ms with 30 ms gap between pulses
+- Encoder thread publishes `(target_band, target_freq)` to `_relay_target_slot` (a `LatestSlot`); the **relay executor** thread takes the latest target and computes the minimum pulse train against tracked hardware state. Burst spins coalesce — no queued backlog.
+- 2-second band-settle is a literal `time.sleep(2.0)` inside the executor between band-pulse and freq-pulse phases.
+- State persisted to `/var/lib/video_looper/previous_values.pkl` (configurable via `[encoder] state_file`).
 
 ### Band System
 - **Band 1**: Channels 2-6 (RF frequencies 2-6)
@@ -142,20 +158,22 @@ network_cmd_port = "55355"
 ## Important Classes
 
 ### ProcessManager (process_manager.py)
-Main application class:
-- Loads config from INI file
-- Initializes MPV and RetroArch players
-- Selects player based on file extension (content_type)
-- Builds playlists (broadcast or legacy mode)
-- Main loop: checks player status, handles channel changes, USB insertion
+Main application class. Owns the worker; **main thread does not launch players**.
+- Loads config; initializes MPV and RetroArch players (`_players`).
+- Builds playlists (broadcast or legacy mode).
+- Owns two `LatestSlot`s sharing one wake event:
+  - `_channel_intent_slot: ChannelIntent` (encoder publishes; reasons `'startup' | 'channel'`)
+  - `_eov_intent_slot: EovIntent` (main publishes when no player is playing)
+- `_channel_worker` is the **sole owner of `self._active_player`** and the only caller of `_play_movie`. Drains channel-first so it always wins over eov on contention. Channel intents pass through a 150 ms settle window — fast encoder spins fold into one launch on the final value.
+- Main loop just polls `is_playing()`, posts eov intents (idempotent via `_eov_pending` flag cleared by worker on consume), and watches the file reader for USB inserts.
+- `run()` wraps the loop in `try/finally` that signals `_stop_event`, calls `ChannelSwitcher.stop()`, drains players, then `GPIO.cleanup()`.
 
 ### ChannelSwitcher (rotary.py)
-Hardware control:
-- `read_remote_rotary_encoder()` - polls I2C at address 0x8
-- `on_channel_change` callback - triggers player switch
-- `relay_channel_up/down()` - queue frequency relay pulses
-- `relay_band_press()` - queue band relay pulses
-- `execute_relay_commands()` - daemon thread consuming relay queue
+Encoder + relay control.
+- `read_remote_rotary_encoder()` delegates to `self._backend.read()` (I2C or mock).
+- `change_channel()` reads the backend; if the channel changed and is mapped, publishes a relay target to `_relay_target_slot` and invokes `on_channel_change(channel, prev)` (which posts a `ChannelIntent` to the `ProcessManager`).
+- `_relay_executor` thread: waits on `_relay_wake`, takes the latest target, computes a minimum delta from `previous_band` + `frequency_by_band`, drives GPIO pulses with the band-settle sleep between phases.
+- `stop()` sets `_stop_event` so both the encoder loop and the relay executor exit cleanly.
 
 ### BroadcastChannelManager (model.py)
 Synchronized playback:
@@ -178,23 +196,29 @@ python3 -m Adafruit_Video_Looper.process_manager                    # default /b
 python3 -m Adafruit_Video_Looper.process_manager /path/to/config.ini
 ```
 
-This is what `run.sh` calls.
-
-The supervisor config (`assets/video_looper.conf`) currently runs `python3 -u -m Adafruit_Video_Looper.video_looper`, but no `video_looper.py` exists in `Adafruit_Video_Looper/` — only `process_manager.py`. If autostart is broken on the Pi, the supervisor command likely needs updating to `Adafruit_Video_Looper.process_manager`.
+This is what `run.sh` calls. The supervisor config in `assets/video_looper.conf` runs the same module.
 
 ## Configuration (video_looper.ini)
 
 Key sections:
-- `[process_manager]`: file_reader, console_output, is_random, wait_time
-- `[mpv]`: extensions, sound, hwdec, drm_connector, extra_args
-- `[retroarch]`: extensions, core_path, video_driver, video_context_driver
+- `[process_manager]`: `file_reader`, `is_random`, `wait_time` (the `console_output` flag was dropped — logging now goes to `/tmp/video_looper.log` and stdout unconditionally)
+- `[encoder]`: `backend` (`i2c` | `mock`), `mock_fifo`, `state_file`
+- `[logging]`: `relay_debug` (when true, relay-pulse events log at DEBUG to the file handler)
+- `[mpv]`: `extensions`, `sound`, `hwdec`, `drm_connector`, `extra_args`
+- `[retroarch]`: `extensions`, `core_path`, `video_driver`, `video_context_driver`, `audio_driver`, ...
 - `[directory]`: path for local directory mode
 - `[usb_drive]`: mount path for USB drive mode
 
 ## Threading Model
-- **Main thread**: main loop checking player status
-- **Channel switcher**: daemon thread polling I2C
-- **Relay executor**: daemon thread processing relay queue
+
+Single Python process, four threads. GIL means only one thread runs Python bytecode at a time; multi-core utilization comes from subprocesses (mpv, retroarch).
+
+- **`main`** (`process_manager.run`): polls `is_playing()`, posts eov intents to `_eov_intent_slot`, watches file reader. **Never launches players.**
+- **`encoder`** (`ChannelSwitcher.start`): polls the encoder backend at ~5 ms, publishes `ChannelIntent` to `_channel_intent_slot` and `(band, freq)` to `_relay_target_slot` on changes.
+- **`channel_worker`** (`ProcessManager._channel_worker`): waits on the shared worker wake event, takes channel-intent first then eov-intent, applies the 150 ms settle window for channel intents, then calls `_play_movie`. Sole owner of subprocess spawns.
+- **`relay_executor`** (`ChannelSwitcher._relay_executor`): waits on `_relay_wake`, takes latest target, computes min pulse train, drives GPIO. Re-takes after each train so mid-train target changes are absorbed.
+
+All cross-thread communication is via `LatestSlot`s. **No `queue.Queue`, no module-global queues.** No `Lock` outside the slots' internal locks and the small `_eov_pending_lock`.
 
 ## DietPi Setup Notes
 
@@ -229,6 +253,7 @@ ls -la /dev/dri/
 - **Fix**: Ensure `dtoverlay=vc4-kms-v3d` in `/boot/config.txt` (check for typos!)
 
 ### Channel switching not working
-- Check I2C: `i2cget -y 1 0x8` and turn knob
-- Check logs for "Switching from channel X to Y" messages
+- Check I2C: `i2cget -y 1 0x8` and turn knob.
+- Check `[encoder] backend` in `/boot/video_looper.ini` — if it's left at `mock` from a test run, the I2C path is bypassed and the looper is reading from a FIFO no one is writing to.
+- Tail the structured log: `tail -f /tmp/video_looper.log | grep -E 'publish|handle|start|stop'`. Expect a `looper.encoder publish target=N prev=M` followed by `looper.worker handle channel=N ...` and a player `start` line.
 
