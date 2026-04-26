@@ -157,13 +157,10 @@ class RetroArchPlayer:
             # Video scaling options for full screen stretch
             'video_scale_integer = "{}"'.format(scale_integer),
             'video_force_aspect = "{}"'.format(force_aspect),
-            # aspect_ratio_index: 23 = Custom (uses custom_viewport settings)
-            'aspect_ratio_index = "23"',
-            # Custom viewport set to full 720p screen (stretch to fill)
-            'custom_viewport_x = "0"',
-            'custom_viewport_y = "-15"',
-            'custom_viewport_width = "1280"',
-            'custom_viewport_height = "720"',
+            # aspect_ratio_index: 20 = Full (stretch to current framebuffer);
+            # avoids hardcoding a viewport that breaks when the framebuffer
+            # mode changes (e.g. CRT/modulator 4:3 vs debug monitor 16:9).
+            'aspect_ratio_index = "20"',
             # Audio
             'audio_enable = "{}"'.format(audio_enable),
             # Save states
