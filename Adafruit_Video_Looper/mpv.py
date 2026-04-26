@@ -350,8 +350,9 @@ class MPVPlayer:
                 pass
             self._ipc_sock = None
 
-        # Kill all mpv processes (non-blocking like omxplayer)
-        subprocess.Popen(['pkill', '-9', 'mpv'],
+        # Kill mpv processes that are *our* children only — avoids
+        # disturbing any unrelated mpv someone might be running on the box.
+        subprocess.Popen(['pkill', '-9', '-P', str(os.getpid()), 'mpv'],
                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
         log.info('stop reason=%s', reason)

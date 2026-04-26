@@ -3,13 +3,13 @@
 # cadence, so each write becomes a separate encoder publish (does not
 # coalesce at the encoder layer).
 #
-# Stage 1 (current architecture): the worker queue accumulates one launch
-# per intermediate channel, so coalescing is *expected to fail*.
-# Stage 2 (LatestSlot): only the final channel launches → flip to expect.
+# Stage 2: with LatestSlot replacing the worker queue, only the final
+# channel of the burst should produce a player launch (plus the initial
+# startup launch). max-launches=2 covers startup + the final target.
 #
 # expect: no-double-spawn
 # expect: cleanup-final-player
-# expect-fail: coalesce window=1.5 max-launches=2
+# expect: coalesce window=1.5 max-launches=2
 # delta_seconds  channel
 0.00  3
 0.10  4

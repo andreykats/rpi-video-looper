@@ -9,7 +9,7 @@
 # Without that fixture the scenario will not exercise the race window.
 #
 # expect: cleanup-final-player
-# expect-fail: no-double-spawn
+# expect: no-double-spawn
 # delta_seconds  channel
 0.0   4
 4.8   5

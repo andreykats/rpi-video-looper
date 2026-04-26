@@ -2,14 +2,18 @@ import configparser
 import importlib
 import logging
 import os
-import queue
 import re
 import subprocess
 import sys
 import signal
 import time
 import threading
+from dataclasses import dataclass
+from typing import Optional
 
+import RPi.GPIO as GPIO
+
+from .latest_slot import LatestSlot
 from .model import Playlist, Movie, BroadcastChannelManager
 from .rotary import ChannelSwitcher
 from .mpv import MPVPlayer
@@ -17,6 +21,18 @@ from .retroarch import RetroArchPlayer
 
 log = logging.getLogger('looper.main')
 wlog = logging.getLogger('looper.worker')
+
+
+@dataclass
+class ChannelIntent:
+    channel: int
+    previous_channel: Optional[int]
+    reason: str  # 'startup' | 'channel'
+
+
+@dataclass
+class EovIntent:
+    channel: int
 
 
 class ProcessManager:
@@ -66,12 +82,17 @@ class ProcessManager:
         self._sound_vol = 0
         self._sound_vol_file = self._config.get('mpv', 'sound_vol_file', fallback='')
 
-        # Channel-change pipeline. The encoder polling thread inside
-        # ChannelSwitcher publishes to this queue and returns to polling
-        # immediately; the worker below drains it and runs the (potentially
-        # slow) player operations. Keeps encoder reads from blocking on
-        # MPV/RetroArch startup.
-        self._channel_queue = queue.Queue()
+        # Channel-change pipeline. Two LatestSlots share one wake event.
+        # Producers (encoder thread, main thread) overwrite each other
+        # within their slot — only the latest target is acted on. Worker
+        # drains channel-intent first, then eov-intent: channel always
+        # wins on contention without needing priority logic in the slot.
+        self._worker_wake = threading.Event()
+        self._channel_intent_slot = LatestSlot(self._worker_wake)
+        self._eov_intent_slot = LatestSlot(self._worker_wake)
+        self._eov_pending = False
+        self._eov_pending_lock = threading.Lock()
+        self._stop_event = threading.Event()
         self._channel_worker_thread = threading.Thread(
             target=self._channel_worker,
             name='channel_worker',
@@ -80,7 +101,7 @@ class ProcessManager:
 
         # Initialize channel switcher (starts after playlist is built)
         self._channel_switcher = ChannelSwitcher(
-            on_channel_change=self._publish_channel_change,
+            on_channel_change=self._publish_channel_intent,
             config=self._config,
         )
         self._channel_switcher_thread = threading.Thread(
@@ -234,55 +255,103 @@ class ProcessManager:
         manager.set_default_playlist(Playlist([]))
         return manager
 
-    def _publish_channel_change(self, channel, previous_channel):
-        """Called from the I2C polling thread. Hands off to the worker so the
-        encoder can keep being read while the player swaps."""
-        self._channel_queue.put((channel, previous_channel))
+    def _publish_channel_intent(self, channel, previous_channel):
+        """Called from the encoder polling thread. Publishes a channel
+        intent and returns immediately so the encoder loop stays
+        responsive while the worker swaps players."""
+        self._channel_intent_slot.publish(
+            ChannelIntent(channel=channel, previous_channel=previous_channel,
+                          reason='channel')
+        )
+
+    def _publish_eov_intent(self):
+        """Called from the main loop when no player is active. Idempotent
+        while a previous eov is in flight — set-once-per-need."""
+        with self._eov_pending_lock:
+            if self._eov_pending:
+                return
+            self._eov_pending = True
+        log.info('advance reason=eov channel=%d', self._current_channel)
+        self._eov_intent_slot.publish(EovIntent(channel=self._current_channel))
 
     def _channel_worker(self):
-        """Drain channel-change requests in FIFO order on a dedicated thread."""
-        while self._running:
-            try:
-                channel, previous_channel = self._channel_queue.get(timeout=0.2)
-            except queue.Empty:
+        """Single owner of player launches.
+
+        Wakes on either intent slot; drains channel-intent first so it
+        always wins on contention, then eov-intent. Each wake produces at
+        most one player launch.
+        """
+        while not self._stop_event.is_set():
+            if not self._worker_wake.wait(timeout=0.2):
+                continue
+            channel_intent = self._channel_intent_slot.take()
+            eov_intent = self._eov_intent_slot.take()
+            self._worker_wake.clear()
+
+            if eov_intent is not None:
+                with self._eov_pending_lock:
+                    self._eov_pending = False
+
+            # Channel beats eov when both are pending.
+            intent = channel_intent or eov_intent
+            if intent is None:
                 continue
             try:
-                self._handle_channel_change(channel, previous_channel)
+                self._handle_intent(intent)
             except Exception as e:
                 wlog.exception('worker error: %s', e)
 
-    def _handle_channel_change(self, channel, previous_channel):
-        """Handle rotary encoder channel changes."""
-        if not self._running:
-            return
+    def _handle_intent(self, intent):
+        if isinstance(intent, ChannelIntent):
+            self._handle_channel_intent(intent)
+        elif isinstance(intent, EovIntent):
+            self._handle_eov_intent(intent)
 
+    def _handle_channel_intent(self, intent):
+        channel = intent.channel
         if channel < 1 or channel > 13:
             wlog.warning('channel %d out of range (1-13)', channel)
             return
 
-        wlog.info('handle channel=%d prev=%d', channel, previous_channel)
-
-        # Note: Don't stop players here - let _play_movie() handle it
-        # This allows same-player-type transitions to use IPC (fast switching)
+        wlog.info('handle channel=%d prev=%s reason=%s',
+                  channel, intent.previous_channel, intent.reason)
 
         if self._broadcast_manager is not None:
-            # Broadcast mode
             self._current_channel = channel
             movie, seek_offset = self._broadcast_manager.calculate_broadcast_position(channel)
-
             if movie is None:
                 wlog.info('channel %d empty', channel)
                 self._playback_stopped = True
                 return
-
             wlog.info('channel %d playing %s', channel, movie.filename)
             self._play_movie(movie, seek_offset)
             self._playback_stopped = False
         else:
-            # Legacy mode
             video_index = channel - 1
             if self._playlist and video_index < self._playlist.length():
                 self._playlist.set_next(video_index)
+                self._playback_stopped = False
+                movie = self._playlist.get_next(self._is_random)
+                if movie is not None:
+                    self._play_movie(movie)
+
+    def _handle_eov_intent(self, intent):
+        """End-of-video advance — same path as a channel change but driven
+        by the main loop noticing no active player rather than the encoder."""
+        wlog.info('handle eov channel=%d', intent.channel)
+        if self._broadcast_manager is not None:
+            movie, seek_offset = self._broadcast_manager.calculate_broadcast_position(
+                intent.channel
+            )
+            if movie is None:
+                self._playback_stopped = True
+                return
+            self._play_movie(movie, seek_offset)
+            self._playback_stopped = False
+        elif self._playlist is not None:
+            movie = self._playlist.get_next(self._is_random)
+            if movie is not None:
+                self._play_movie(movie)
                 self._playback_stopped = False
 
     def _play_movie(self, movie, seek_offset=None):
@@ -304,75 +373,71 @@ class ProcessManager:
         self._active_player = player
 
     def run(self):
-        """Main program loop."""
+        """Main program loop.
+
+        Main becomes a pure poller/publisher: it watches `is_playing()`
+        and the file-reader, and posts intents. The worker thread is the
+        only writer of `self._active_player` and the only caller of
+        `_play_movie`.
+        """
         self._playlist = self._build_playlist()
 
         # Read the encoder synchronously so the initial movie matches the
-        # actual hardware position. Without this, the main thread can race
-        # the switcher daemon: main plays the default channel (e.g. 2/NES)
-        # while the switcher reads channel 8/MPV — whichever finishes last
-        # owns DRM, and the system can stick on the wrong player.
+        # actual hardware position. Without this the worker would race
+        # the switcher: main posts channel=2 startup intent while the
+        # switcher reads channel=8 — whichever finishes last owns DRM.
         initial = self._channel_switcher.read_remote_rotary_encoder()
         if 1 <= initial <= 13:
             self._current_channel = initial
             self._channel_switcher.previous_channel = initial
 
-        # Get initial movie
         if self._broadcast_manager is not None:
             log.info('starting broadcast TV mode')
-            movie, seek_offset = self._broadcast_manager.calculate_broadcast_position(self._current_channel)
-        else:
-            movie = self._playlist.get_next(self._is_random) if self._playlist else None
-            seek_offset = None
 
-        # Start channel worker before switcher so the consumer is ready
-        # before the producer can publish.
+        # Start worker before switcher so the consumer is ready before
+        # any producer publishes.
         self._channel_worker_thread.start()
         self._channel_switcher_thread.start()
 
-        while self._running:
-            # Check if any player is playing
-            any_playing = any(p.is_playing() for p in self._players.values())
+        # Initial player launch goes through the worker like every other
+        # launch — keeps the single-owner invariant from minute zero.
+        self._channel_intent_slot.publish(
+            ChannelIntent(channel=self._current_channel,
+                          previous_channel=None,
+                          reason='startup')
+        )
+        self._worker_wake.set()
 
-            if not any_playing and not self._playback_stopped:
-                if movie is not None:
-                    # Get next movie based on mode
-                    if self._broadcast_manager is not None:
-                        movie, seek_offset = self._broadcast_manager.calculate_broadcast_position(
-                            self._current_channel
-                        )
-                    else:
-                        if self._playlist:
-                            movie = self._playlist.get_next(self._is_random)
-                        seek_offset = None
+        try:
+            while self._running:
+                any_playing = any(p.is_playing() for p in self._players.values())
 
-                    if self._wait_time > 0:
-                        time.sleep(self._wait_time)
+                if not any_playing and not self._playback_stopped:
+                    self._publish_eov_intent()
 
-                    if movie:
-                        log.info('advance reason=eov file=%s type=%s',
-                                 movie.filename, movie.content_type)
-                        self._play_movie(movie, seek_offset)
+                # Check for file reader changes (USB insert/remove)
+                if self._reader.is_changed() and not self._playback_stopped:
+                    log.info('media changed, rebuilding playlists')
+                    self._stop_all_players()
 
-            # Check for file reader changes (USB insert/remove)
-            if self._reader.is_changed() and not self._playback_stopped:
-                log.info('media changed, rebuilding playlists')
-                self._stop_all_players()
+                    self._broadcast_start_time = time.time()
+                    self._playlist = self._build_playlist()
 
-                self._broadcast_start_time = time.time()
-                self._playlist = self._build_playlist()
+                    # Trigger a fresh launch via the worker.
+                    self._publish_eov_intent()
 
-                if self._broadcast_manager is not None:
-                    movie, seek_offset = self._broadcast_manager.calculate_broadcast_position(
-                        self._current_channel
-                    )
-                else:
-                    movie = self._playlist.get_next(self._is_random) if self._playlist else None
-                    seek_offset = None
-
-            time.sleep(0.1)  # Main loop delay
-
-        log.info('process manager stopped')
+                time.sleep(0.1)  # Main loop delay
+        finally:
+            log.info('shutting down')
+            self._stop_event.set()
+            self._channel_switcher.stop()
+            self._worker_wake.set()  # unblock worker
+            self._stop_all_players()
+            try:
+                GPIO.cleanup()
+            except Exception as e:
+                log.warning('GPIO cleanup failed: %s', e)
+            log.info('process manager stopped')
 
     def quit(self, shutdown=False):
         """Shut down the program."""
@@ -383,7 +448,6 @@ class ProcessManager:
 
         self._playback_stopped = True
         self._running = False
-        self._stop_all_players()
 
     def signal_quit(self, signal, frame):
         """Signal handler for quit."""

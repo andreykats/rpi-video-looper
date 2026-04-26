@@ -237,8 +237,9 @@ class RetroArchPlayer:
             except Exception:
                 pass
 
-        # Sweep any other retroarch processes that may exist.
-        subprocess.run(['pkill', '-9', 'retroarch'],
+        # Sweep our own retroarch children only (don't touch unrelated
+        # retroarch processes someone might be running on the box).
+        subprocess.run(['pkill', '-9', '-P', str(os.getpid()), 'retroarch'],
                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         log.info('stop reason=kill')
         self._process = None
