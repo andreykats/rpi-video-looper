@@ -50,8 +50,8 @@ class ChannelSwitcher:
         self.previous_channel = 0
         self.previous_band = 1  # Default to band 1
         # Track frequency per band (each band has independent RF frequency range)
-        # Band 1: RF 2-6, Band 2: RF 7-13 (hardware internal), maps to RF 16-22
-        self.frequency_by_band = {1: 2, 2: 7}  # Default to starting frequency per band
+        # Band 1: RF 2-6, Band 2: RF 16-22
+        self.frequency_by_band = {1: 2, 2: 16}  # Default to starting frequency per band
         self.on_channel_change = on_channel_change
 
         # Load previously set frequencies and band from file
@@ -229,7 +229,7 @@ class ChannelSwitcher:
         # Only reset frequency on FIRST entry to a band (hardware remembers per-band)
         if target_band not in self.visited_bands:
             # First entry - hardware is at band's starting position
-            band_start_frequencies = {1: 2, 2: 7}  # Band 2 starts at 7, not 16
+            band_start_frequencies = {1: 2, 2: 16}
             self.frequency_by_band[target_band] = band_start_frequencies[target_band]
             self.visited_bands.add(target_band)
             print(f"First entry to band {target_band}, reset frequency to {band_start_frequencies[target_band]}")
@@ -258,7 +258,7 @@ class ChannelSwitcher:
     def load_previous_values(self):
         """Load frequency_by_band and previous_band from a file.
         Returns (frequency_by_band dict, band) tuple."""
-        default_frequencies = {1: 2, 2: 7}  # Default to starting frequency per band
+        default_frequencies = {1: 2, 2: 16}  # Default to starting frequency per band
         try:
             with open('previous_values.pkl', 'rb') as f:
                 data = pickle.load(f)
