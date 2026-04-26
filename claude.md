@@ -231,3 +231,11 @@ ls -la /dev/dri/
 ### Channel switching not working
 - Check I2C: `i2cget -y 1 0x8` and turn knob
 - Check logs for "Switching from channel X to Y" messages
+
+## Known Bugs (Backlog)
+
+### Modulator desync on first entry to band 2 (rotary.py)
+- **Symptom**: After cycling channels including channel 7+, the TV's actual RF channel no longer matches the looper's intended channel. Looper logs `Tuning UP from 7 to 16 on band 2 (9 pulses)` on first band-2 entry — band 2 only has 7 RF positions (16–22), so 9 UP pulses overshoot and wrap.
+- **Root cause** (`Adafruit_Video_Looper/rotary.py`): `band_start_frequencies = {1: 2, 2: 7}` resets `frequency_by_band[2]` to 7 on first entry, but `CHANNEL_MAP[7] = (2, 16)` targets RF 16. The numbering scheme used in `band_start_frequencies` (and the initial `frequency_by_band` value, and `default_frequencies` in `load_previous_values`) is inconsistent with the RF numbering in `CHANNEL_MAP` for band 2.
+- **Fix**: Change band 2 starts to 16 in three places — `__init__` (`self.frequency_by_band = {1: 2, 2: 16}`), `_switch_to_band` (`band_start_frequencies = {1: 2, 2: 16}`), and `load_previous_values` (`default_frequencies = {1: 2, 2: 16}`). The misleading "Band 2: RF 7-13 (hardware internal), maps to RF 16-22" comment should be removed; band 2 is RF 16–22 throughout.
+- **Trigger to repro**: Boot, navigate to any band-1 channel (2–6), then to a band-2 channel (7–13). Subsequent rotation across both bands will display the wrong TV channel even though the looper plays the right video.
