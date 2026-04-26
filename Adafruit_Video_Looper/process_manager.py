@@ -274,12 +274,20 @@ class ProcessManager:
         log.info('advance reason=eov channel=%d', self._current_channel)
         self._eov_intent_slot.publish(EovIntent(channel=self._current_channel))
 
+    # Settle window for the worker — after taking a channel intent, wait
+    # this long for newer publishes to overwrite it before acting. Folds
+    # a fast encoder spin into a single launch instead of one per stop.
+    # Single-channel responsiveness cost is small (well under human-
+    # perception thresholds for "instant") and dominated by the
+    # modulator's 2s band-settle on cross-band changes anyway.
+    _CHANNEL_SETTLE_S = 0.15
+
     def _channel_worker(self):
         """Single owner of player launches.
 
         Wakes on either intent slot; drains channel-intent first so it
         always wins on contention, then eov-intent. Each wake produces at
-        most one player launch.
+        most one player launch (after a settle window for channel intents).
         """
         while not self._stop_event.is_set():
             if not self._worker_wake.wait(timeout=0.2):
@@ -296,10 +304,42 @@ class ProcessManager:
             intent = channel_intent or eov_intent
             if intent is None:
                 continue
+
+            # Settle window: only applies to encoder-driven channel
+            # intents. Startup and eov intents act immediately.
+            if isinstance(intent, ChannelIntent) and intent.reason == 'channel':
+                intent = self._settle_channel_intent(intent)
+
             try:
                 self._handle_intent(intent)
             except Exception as e:
                 wlog.exception('worker error: %s', e)
+
+    def _settle_channel_intent(self, intent):
+        """Wait briefly for a quiet slot before acting on a channel intent.
+
+        Each newer publish during the window restarts the timer, so a
+        continuous spin debounces to its final value.
+        """
+        deadline = time.monotonic() + self._CHANNEL_SETTLE_S
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return intent
+            if not self._worker_wake.wait(timeout=remaining):
+                return intent
+            self._worker_wake.clear()
+            newer = self._channel_intent_slot.take()
+            # eov can also arrive during the window; channel always wins,
+            # but we still need to clear the pending flag so main can
+            # publish more eov intents later.
+            extra_eov = self._eov_intent_slot.take()
+            if extra_eov is not None:
+                with self._eov_pending_lock:
+                    self._eov_pending = False
+            if newer is not None:
+                intent = newer
+                deadline = time.monotonic() + self._CHANNEL_SETTLE_S
 
     def _handle_intent(self, intent):
         if isinstance(intent, ChannelIntent):
