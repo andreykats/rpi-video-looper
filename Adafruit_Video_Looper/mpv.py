@@ -1,5 +1,6 @@
 # Copyright 2024
 # License: GNU GPLv2, see LICENSE.txt
+import logging
 import os
 import select
 import subprocess
@@ -8,6 +9,8 @@ import socket
 import json
 
 SOCKET_PATH = '/tmp/mpv-video-looper.sock'
+
+log = logging.getLogger('looper.mpv')
 
 
 def _blank_console():
@@ -144,15 +147,15 @@ class MPVPlayer:
                         if result.get('error') == 'success':
                             return True
                         else:
-                            print('MPV IPC: Command failed: {}'.format(result))
+                            log.warning('ipc command failed: %s', result)
                             return False
                     except json.JSONDecodeError:
                         continue
 
-            print('MPV IPC: Timeout waiting for response')
+            log.warning('ipc timeout waiting for response')
             return False
         except (socket.error, OSError, BrokenPipeError) as e:
-            print('MPV IPC: Socket error: {}'.format(e))
+            log.warning('ipc socket error: %s', e)
             self._ipc_sock = None  # Mark socket as dead
             return False
 
@@ -175,12 +178,12 @@ class MPVPlayer:
                 success = self._send_ipc_command_verified('loadfile', movie.target, 'replace')
 
             if success:
-                print('MPV: Loaded {} via IPC'.format(movie.filename))
+                log.info('ipc-load file=%s', movie.filename)
             else:
-                print('MPV: IPC load failed, will restart')
+                log.warning('ipc-load failed, will restart')
             return success
         except Exception as e:
-            print('MPV: IPC exception: {}'.format(e))
+            log.exception('ipc exception: %s', e)
             return False
 
     def play(self, movie, loop=None, vol=0, seek_position=None):
@@ -203,7 +206,7 @@ class MPVPlayer:
                     if self._load_via_ipc(movie, seek_position):
                         return  # Success after reconnect
                 # Socket still not available - fall through to kill and restart
-                print('MPV: Socket not available, restarting player')
+                log.info('ipc socket unavailable, restarting player')
 
         # Fallback: kill and restart mpv
         self.stop()
@@ -265,8 +268,7 @@ class MPVPlayer:
         # Add movie file path
         args.append(movie.target)
 
-        # Debug: print the command being run
-        print("MPV command: {}".format(' '.join(args)))
+        log.debug('mpv command: %s', ' '.join(args))
 
         # MPV's audio backends and DRM context use XDG_RUNTIME_DIR for
         # runtime sockets; supervisor's environment doesn't include it.
@@ -283,6 +285,9 @@ class MPVPlayer:
             close_fds=True,
             env=env,
         )
+        log.info('start pid=%d file=%s seek=%s',
+                 self._process.pid, movie.filename,
+                 int(seek_position) if seek_position else 0)
 
         # IPC socket is connected lazily on first use (see _load_via_ipc /
         # reconnect path). Skipping the synchronous wait here keeps the worker
@@ -322,6 +327,10 @@ class MPVPlayer:
 
     def stop(self, block=True):
         """Stop the video player. Always non-blocking for fast channel switching."""
+        if self._process is None and self._ipc_sock is None:
+            return  # nothing to stop
+
+        reason = 'kill'
         # Reset play request time so new plays can happen immediately
         self._play_requested_time = 0
 
@@ -332,6 +341,7 @@ class MPVPlayer:
         if self._ipc_sock:
             try:
                 self._send_ipc_command('quit')
+                reason = 'ipc'
             except:
                 pass
             try:
@@ -343,6 +353,8 @@ class MPVPlayer:
         # Kill all mpv processes (non-blocking like omxplayer)
         subprocess.Popen(['pkill', '-9', 'mpv'],
                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        log.info('stop reason=%s', reason)
 
         # Let the process reference be garbage collected
         self._process = None

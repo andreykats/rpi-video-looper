@@ -2,10 +2,13 @@
 # Author: Tony DiCola
 # License: GNU GPLv2, see LICENSE.txt
 import glob
+import logging
 import subprocess
 import time
 
 import pyudev
+
+log = logging.getLogger('looper.usb')
 
 
 class USBDriveMounter:
@@ -73,14 +76,15 @@ class USBDriveMounter:
 
 
 if __name__ == '__main__':
+    logging.basicConfig(level=logging.INFO)
     # Run as a service that mounts all USB drives as read-only under the default
     # path of /mnt/usbdrive*.
     drive_mounter = USBDriveMounter(readonly=True)
     drive_mounter.mount_all()
     drive_mounter.start_monitor()
-    print ('Listening for USB drive changes (press Ctrl-C to quit)...')
+    log.info('listening for USB drive changes (Ctrl-C to quit)')
     while True:
         if drive_mounter.poll_changes():
-            print ('USB drives changed!')
+            log.info('usb drives changed')
             drive_mounter.mount_all()
         time.sleep(0)

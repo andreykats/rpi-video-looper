@@ -1,3 +1,4 @@
+import logging
 import os
 import socket
 import subprocess
@@ -5,6 +6,8 @@ import time
 
 OVERRIDE_CONFIG_PATH = '/tmp/retroarch-video-looper.cfg'
 RETROARCH_CMD_PORT = 55355
+
+log = logging.getLogger('looper.retroarch')
 
 
 def _blank_console():
@@ -68,7 +71,7 @@ class RetroArchPlayer:
         """
         try:
             if self._send_udp_command('LOAD_CONTENT {}'.format(rom_path)):
-                print('RetroArch: Loaded {} via network command'.format(filename))
+                log.info('network-load file=%s', filename)
                 return True
             return False
         except Exception:
@@ -85,7 +88,7 @@ class RetroArchPlayer:
         """
         # During grace period, don't try to restart or send commands
         if self._in_grace_period():
-            print('RetroArch: Ignoring play() during startup grace period')
+            log.info('ignoring play() during startup grace period')
             return
 
         # Try network command if RetroArch is already running (fast ROM switching)
@@ -93,7 +96,7 @@ class RetroArchPlayer:
             if self._load_via_network(movie.target, movie.filename):
                 return  # Success - no need to restart
             # Network command failed - fall through to kill and restart
-            print('RetroArch: Network command failed, will restart')
+            log.warning('network command failed, will restart')
 
         # Kill and restart RetroArch
         self.stop()
@@ -102,7 +105,7 @@ class RetroArchPlayer:
         self._play_requested_time = time.time()
 
         if not self._core_path:
-            print("RetroArch error: core_path is not set in [retroarch].")
+            log.error('core_path is not set in [retroarch]')
             return
 
         args = ['retroarch']
@@ -118,7 +121,7 @@ class RetroArchPlayer:
 
         args.append(movie.target)
 
-        print("RetroArch command: {}".format(' '.join(args)))
+        log.debug('retroarch command: %s', ' '.join(args))
 
         stderr_file = open('/tmp/retroarch-stderr.log', 'w')
 
@@ -138,6 +141,8 @@ class RetroArchPlayer:
                 close_fds=True,
                 env=env,
             )
+            log.info('start pid=%d file=%s seek=0',
+                     self._process.pid, movie.filename)
         finally:
             stderr_file.close()
 
@@ -212,11 +217,13 @@ class RetroArchPlayer:
             return False
         process.poll()
         if process.returncode is not None:
-            print(f"RetroArch exited with code: {process.returncode}")
+            log.info('exited code=%d', process.returncode)
         return process.returncode is None
 
     def stop(self, block=True):
         """Stop RetroArch."""
+        if self._process is None:
+            return
         self._play_requested_time = 0
         _blank_console()
 
@@ -233,6 +240,7 @@ class RetroArchPlayer:
         # Sweep any other retroarch processes that may exist.
         subprocess.run(['pkill', '-9', 'retroarch'],
                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        log.info('stop reason=kill')
         self._process = None
 
     @staticmethod

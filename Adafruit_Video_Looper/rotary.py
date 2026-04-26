@@ -1,24 +1,25 @@
-import smbus
-import time
-import sys
-import RPi.GPIO as GPIO
-import queue
-import threading
+import logging
+import os
 import pickle
+import queue
+import sys
+import threading
+import time
+
+import RPi.GPIO as GPIO
+
+from .encoder import create_backend
+
+log = logging.getLogger('looper.relay')
+elog = logging.getLogger('looper.encoder')
 
 # Create a queue
 relay_queue = queue.Queue()
-
-# Rotary encoder's I2C address
-I2C_ADDRESS = 0x8
 
 # GPIO pins for relay control (modify as needed)
 RELAY_UP_PIN = 27  # Frequency up relay
 RELAY_DOWN_PIN = 22  # Frequency down relay
 RELAY_BAND_PIN = 17  # Band selector relay
-
-# Initialize I2C bus
-bus = smbus.SMBus(1)  # Use bus 1 (check your specific Pi model)
 
 # Set up GPIO for Relays
 GPIO.setmode(GPIO.BCM)  # Use Broadcom pin numbering
@@ -45,14 +46,21 @@ CHANNEL_MAP = {
     13: (2, 22),
 }
 
+DEFAULT_STATE_FILE = 'previous_values.pkl'
+
 class ChannelSwitcher:
-    def __init__(self, on_channel_change=None):
+    def __init__(self, on_channel_change=None, config=None, state_file=None):
         self.previous_channel = 0
         self.previous_band = 1  # Default to band 1
         # Track frequency per band (each band has independent RF frequency range)
         # Band 1: RF 2-6, Band 2: RF 16-22
         self.frequency_by_band = {1: 2, 2: 16}  # Default to starting frequency per band
         self.on_channel_change = on_channel_change
+        self._state_file = state_file or DEFAULT_STATE_FILE
+        self._stop_event = threading.Event()
+
+        # Build encoder backend (i2c by default; mock available via config).
+        self._backend = create_backend(config) if config is not None else _build_default_backend()
 
         # Load previously set frequencies and band from file
         self.frequency_by_band, self.previous_band = self.load_previous_values()
@@ -61,18 +69,30 @@ class ChannelSwitcher:
         # Start with previous_band since we're already on it
         self.visited_bands = {self.previous_band}
 
-        print(f"ChannelSwitcher initialized: frequency_by_band = {self.frequency_by_band}, previous_band = {self.previous_band}")
+        elog.info('switcher init frequency_by_band=%s previous_band=%s',
+                  self.frequency_by_band, self.previous_band)
 
         self.initialize_relays()
-        print(f"Relays initialized on GPIO pins: UP={RELAY_UP_PIN}, DOWN={RELAY_DOWN_PIN}, BAND={RELAY_BAND_PIN}")
+        log.info('relays init up=%d down=%d band=%d', RELAY_UP_PIN, RELAY_DOWN_PIN, RELAY_BAND_PIN)
 
         # Start a thread to execute the relay commands
-        threading.Thread(target=self.execute_relay_commands, daemon=True).start()
-        print("Starting relay command executor thread...")
+        self._relay_thread = threading.Thread(
+            target=self.execute_relay_commands, name='relay_executor', daemon=True
+        )
+        self._relay_thread.start()
+        log.info('relay executor thread started')
+
+    def stop(self):
+        """Signal the switcher and relay-executor loops to exit."""
+        self._stop_event.set()
 
     def start(self):
-        while True:
+        while not self._stop_event.is_set():
             self.change_channel()
+            # Tiny sleep so the poll cadence is predictable; without it the
+            # loop runs as fast as the I2C bus allows and the mock backend's
+            # FIFO drain coalesces every burst into one read.
+            time.sleep(0.005)
 
     def get_channel_info(self, channel_number):
         """Get band and frequency for a channel number (0-13).
@@ -97,19 +117,21 @@ class ChannelSwitcher:
         current_frequency = self.frequency_by_band.get(band, target_frequency)
 
         if target_frequency == current_frequency:
-            print(f"Already at frequency {target_frequency} on band {band}, skipping relay pulses")
+            log.info('tune skip band=%d freq=%d already-tuned', band, target_frequency)
             return
 
         if target_frequency > current_frequency:
             # Frequency UP
             pulses = target_frequency - current_frequency
-            print(f"Tuning UP from {current_frequency} to {target_frequency} on band {band} ({pulses} pulses)")
+            log.info('tune up band=%d from=%d to=%d pulses=%d',
+                     band, current_frequency, target_frequency, pulses)
             for _ in range(pulses):
                 self.relay_channel_up()
         else:
             # Frequency DOWN
             pulses = current_frequency - target_frequency
-            print(f"Tuning DOWN from {current_frequency} to {target_frequency} on band {band} ({pulses} pulses)")
+            log.info('tune down band=%d from=%d to=%d pulses=%d',
+                     band, current_frequency, target_frequency, pulses)
             for _ in range(pulses):
                 self.relay_channel_down()
 
@@ -131,9 +153,11 @@ class ChannelSwitcher:
         if channel == self.previous_channel:
             return None
 
+        elog.info('publish target=%d prev=%d', channel, self.previous_channel)
+
         # Channel exists but not mapped (e.g., channel 1)
         if band is None:
-            print(f"Channel {channel} is not mapped - relays will not activate")
+            log.info('channel %d unmapped: skipping relays', channel)
             # Still call callback and update state
             if self.on_channel_change is not None:
                 self.on_channel_change(channel, self.previous_channel)
@@ -154,48 +178,42 @@ class ChannelSwitcher:
         self.previous_channel = channel
 
     def read_remote_rotary_encoder(self):
-        try:
-            return int(bus.read_byte(I2C_ADDRESS))
-        except (TimeoutError, OSError):
-            # I2C read failed - return previous channel to maintain state
-            # Small delay to avoid busy-loop on persistent errors
-            time.sleep(0.1)
-            return self.previous_channel
+        return self._backend.read()
 
     def relay_channel_up(self):
-        print(f"  → Relay UP queued (GPIO {RELAY_UP_PIN})")
+        log.debug('pulse up queued gpio=%d', RELAY_UP_PIN)
         def engage():
-            print(f"    → GPIO {RELAY_UP_PIN} HIGH (relay on)")
+            log.debug('pulse-execute kind=up gpio=%d high', RELAY_UP_PIN)
             GPIO.output(RELAY_UP_PIN, GPIO.HIGH)  # Turn on the relay
 
         def disengage():
-            print(f"    → GPIO {RELAY_UP_PIN} LOW (relay off)")
+            log.debug('pulse-execute kind=up gpio=%d low', RELAY_UP_PIN)
             GPIO.output(RELAY_UP_PIN, GPIO.LOW)  # Turn off the relay
 
         relay_queue.put(engage)  # Add function to queue
         relay_queue.put(disengage)  # Add function to queue
 
     def relay_channel_down(self):
-        print(f"  → Relay DOWN queued (GPIO {RELAY_DOWN_PIN})")
+        log.debug('pulse down queued gpio=%d', RELAY_DOWN_PIN)
         def engage():
-            print(f"    → GPIO {RELAY_DOWN_PIN} HIGH (relay on)")
+            log.debug('pulse-execute kind=down gpio=%d high', RELAY_DOWN_PIN)
             GPIO.output(RELAY_DOWN_PIN, GPIO.HIGH)  # Turn on the relay
 
         def disengage():
-            print(f"    → GPIO {RELAY_DOWN_PIN} LOW (relay off)")
+            log.debug('pulse-execute kind=down gpio=%d low', RELAY_DOWN_PIN)
             GPIO.output(RELAY_DOWN_PIN, GPIO.LOW)  # Turn off the relay
 
         relay_queue.put(engage)  # Add function to queue
         relay_queue.put(disengage)  # Add function to queue
 
     def relay_band_press(self):
-        print(f"  → Relay BAND queued (GPIO {RELAY_BAND_PIN})")
+        log.debug('pulse band queued gpio=%d', RELAY_BAND_PIN)
         def engage():
-            print(f"    → GPIO {RELAY_BAND_PIN} HIGH (relay on)")
+            log.debug('pulse-execute kind=band gpio=%d high', RELAY_BAND_PIN)
             GPIO.output(RELAY_BAND_PIN, GPIO.HIGH)  # Turn on the relay
 
         def disengage():
-            print(f"    → GPIO {RELAY_BAND_PIN} LOW (relay off)")
+            log.debug('pulse-execute kind=band gpio=%d low', RELAY_BAND_PIN)
             GPIO.output(RELAY_BAND_PIN, GPIO.LOW)  # Turn off the relay
 
         relay_queue.put(engage)  # Add function to queue
@@ -205,7 +223,7 @@ class ChannelSwitcher:
         """Switch to target band by pulsing the band relay.
         The modulator has 5 bands that cycle: 1 → 2 → 3 → 4 → 5 → 1..."""
         if target_band == self.previous_band:
-            print(f"Already at band {target_band}, skipping band relay pulses")
+            log.info('band skip target=%d already-on-band', target_band)
             return
 
         # Calculate pulses needed to get from current band to target band (cycling through 5 bands)
@@ -215,15 +233,16 @@ class ChannelSwitcher:
             # Wrap around: e.g., from band 2 to band 1 = 5 - 2 + 1 = 4 pulses
             pulses = 5 - self.previous_band + target_band
 
-        print(f"Switching from band {self.previous_band} to band {target_band} ({pulses} pulses)")
+        log.info('band switch from=%d to=%d pulses=%d',
+                 self.previous_band, target_band, pulses)
         for _ in range(pulses):
             self.relay_band_press()
 
         # Add 2 second delay for modulator to settle on new band
         def band_settle_delay():
-            print("    → Waiting 2 seconds for band to settle...")
+            log.info('band settle waiting=2s')
             time.sleep(2.0)
-            print("    → Band settle delay complete")
+            log.info('band settle done')
         relay_queue.put(band_settle_delay)
 
         # Only reset frequency on FIRST entry to a band (hardware remembers per-band)
@@ -232,35 +251,45 @@ class ChannelSwitcher:
             band_start_frequencies = {1: 2, 2: 16}
             self.frequency_by_band[target_band] = band_start_frequencies[target_band]
             self.visited_bands.add(target_band)
-            print(f"First entry to band {target_band}, reset frequency to {band_start_frequencies[target_band]}")
+            log.info('band first-entry target=%d freq=%d',
+                     target_band, band_start_frequencies[target_band])
         else:
-            print(f"Returning to band {target_band}, hardware remembers frequency {self.frequency_by_band[target_band]}")
+            log.info('band returning target=%d freq=%d',
+                     target_band, self.frequency_by_band[target_band])
 
         self.previous_band = target_band
         self.save_previous_values()
 
     def execute_relay_commands(self):
-        print("Relay command executor thread started")
-        while True:
-            # Get a function from the queue and execute it
-            relay_function = relay_queue.get()
-            relay_function()
-            relay_queue.task_done()
-
+        log.info('relay executor running')
+        while not self._stop_event.is_set():
+            try:
+                relay_function = relay_queue.get(timeout=0.2)
+            except queue.Empty:
+                continue
+            try:
+                relay_function()
+            except Exception as e:
+                log.warning('relay exec error: %s', e)
+            finally:
+                relay_queue.task_done()
             # Add a delay before processing the next item
-            time.sleep(0.03)  # Adjust the delay as needed
+            time.sleep(0.03)
 
     def save_previous_values(self):
         """Save frequency_by_band and previous_band to a file."""
-        with open('previous_values.pkl', 'wb') as f:
-            pickle.dump((self.frequency_by_band, self.previous_band), f)
+        try:
+            with open(self._state_file, 'wb') as f:
+                pickle.dump((self.frequency_by_band, self.previous_band), f)
+        except OSError as e:
+            log.warning('state save failed path=%s err=%s', self._state_file, e)
 
     def load_previous_values(self):
         """Load frequency_by_band and previous_band from a file.
         Returns (frequency_by_band dict, band) tuple."""
         default_frequencies = {1: 2, 2: 16}  # Default to starting frequency per band
         try:
-            with open('previous_values.pkl', 'rb') as f:
+            with open(self._state_file, 'rb') as f:
                 data = pickle.load(f)
                 # Handle current format: (frequency_by_band dict, band)
                 if isinstance(data, tuple) and isinstance(data[0], dict):
@@ -287,18 +316,31 @@ class ChannelSwitcher:
         # Active-HIGH relays: HIGH = on, LOW = off
         GPIO.setup(RELAY_UP_PIN, GPIO.OUT, initial=GPIO.LOW)  # Start LOW (relay off)
         GPIO.setup(RELAY_DOWN_PIN, GPIO.OUT, initial=GPIO.LOW)  # Start LOW (relay off)
-        GPIO.setup(RELAY_BAND_PIN, GPIO.OUT, initial=GPIO.LOW)  # Start LOW (relay off)  
+        GPIO.setup(RELAY_BAND_PIN, GPIO.OUT, initial=GPIO.LOW)  # Start LOW (relay off)
+
+
+def _build_default_backend():
+    """Used when ChannelSwitcher is constructed without a config (e.g.
+    the __main__ debug entry point below). Defaults to I2C."""
+    from .encoder import I2CEncoderBackend
+    return I2CEncoderBackend()
 
 
 if __name__ == "__main__":
-    def handle_switch(channel, direction):
-        print(f"DEBUG: channel changed {direction} to: {channel}")
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format='%(asctime)s.%(msecs)03d %(threadName)s %(name)s %(levelname)s %(message)s',
+        datefmt='%H:%M:%S',
+    )
+
+    def handle_switch(channel, prev):
+        log.info('callback channel=%d prev=%d', channel, prev)
 
     try:
         controller = ChannelSwitcher(handle_switch)
         controller.start()
-
     except KeyboardInterrupt:
-        print("\nExiting. Cleanup GPIO...")
+        log.info('exiting; cleaning up GPIO')
+        controller.stop()
         GPIO.cleanup()
         sys.exit(0)

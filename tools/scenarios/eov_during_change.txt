@@ -1,0 +1,15 @@
+# End-of-video race: change channel ~200ms before a known short clip ends.
+# In Stage 1, main and worker can both call _play_movie at the same time;
+# the no-double-spawn predicate is *expected to fail* on this scenario.
+# In Stage 2, the worker is the sole owner of player launches, and this
+# should pass.
+#
+# REQUIRES: a short (<= 10s) .mp4 fixture on channel 4 of the USB drive.
+# Recommended: tools/fixtures/short_5s.mp4 placed at /mnt/usbdrive0/4/.
+# Without that fixture the scenario will not exercise the race window.
+#
+# expect: cleanup-final-player
+# expect-fail: no-double-spawn
+# delta_seconds  channel
+0.0   4
+4.8   5

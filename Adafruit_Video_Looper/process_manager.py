@@ -1,5 +1,6 @@
 import configparser
 import importlib
+import logging
 import os
 import queue
 import re
@@ -8,12 +9,14 @@ import sys
 import signal
 import time
 import threading
-from datetime import datetime
 
 from .model import Playlist, Movie, BroadcastChannelManager
 from .rotary import ChannelSwitcher
 from .mpv import MPVPlayer
 from .retroarch import RetroArchPlayer
+
+log = logging.getLogger('looper.main')
+wlog = logging.getLogger('looper.worker')
 
 
 class ProcessManager:
@@ -30,7 +33,6 @@ class ProcessManager:
         if len(self._config.read(config_path)) == 0:
             raise RuntimeError('Failed to find configuration file at {0}'.format(config_path))
 
-        self._console_output = self._config.getboolean('process_manager', 'console_output', fallback=True)
         self._is_random = self._config.getboolean('process_manager', 'is_random', fallback=False)
         self._wait_time = self._config.getint('process_manager', 'wait_time', fallback=0)
 
@@ -64,28 +66,28 @@ class ProcessManager:
         self._sound_vol = 0
         self._sound_vol_file = self._config.get('mpv', 'sound_vol_file', fallback='')
 
-        # Channel-change pipeline. The I2C polling thread inside ChannelSwitcher
-        # publishes to this queue and returns to polling immediately; the worker
-        # below drains it and runs the (potentially slow) player operations.
-        # Keeps encoder reads from blocking on MPV/RetroArch startup.
+        # Channel-change pipeline. The encoder polling thread inside
+        # ChannelSwitcher publishes to this queue and returns to polling
+        # immediately; the worker below drains it and runs the (potentially
+        # slow) player operations. Keeps encoder reads from blocking on
+        # MPV/RetroArch startup.
         self._channel_queue = queue.Queue()
         self._channel_worker_thread = threading.Thread(
             target=self._channel_worker,
-            daemon=True
+            name='channel_worker',
+            daemon=True,
         )
 
         # Initialize channel switcher (starts after playlist is built)
-        self._channel_switcher = ChannelSwitcher(self._publish_channel_change)
+        self._channel_switcher = ChannelSwitcher(
+            on_channel_change=self._publish_channel_change,
+            config=self._config,
+        )
         self._channel_switcher_thread = threading.Thread(
             target=self._channel_switcher.start,
-            daemon=True
+            name='encoder',
+            daemon=True,
         )
-
-    def _print(self, message):
-        """Print message to console if enabled."""
-        if self._console_output:
-            now = datetime.now()
-            print("[{}] {}".format(now, message))
 
     def _load_file_reader(self):
         """Load the configured file reader."""
@@ -125,7 +127,7 @@ class ProcessManager:
                 data = json.loads(result.stdout)
                 return float(data['format']['duration'])
         except Exception as e:
-            self._print(f"Warning: Could not extract duration for {video_path}: {e}")
+            log.warning('ffprobe failed path=%s err=%s', video_path, e)
 
         # Fallback: parse from filename
         return self._parse_duration_from_filename(os.path.basename(video_path))
@@ -166,9 +168,9 @@ class ProcessManager:
                 movies.append(movie)
 
                 if duration > 0:
-                    self._print(f"  {x}: {int(duration)}s")
+                    log.info('  %s: %ds', x, int(duration))
                 else:
-                    self._print(f"  {x}: (no duration)")
+                    log.info('  %s: (no duration)', x)
 
         # Handle volume file
         if self._sound_vol_file:
@@ -186,7 +188,7 @@ class ProcessManager:
         self._broadcast_manager = self._build_broadcast_channels()
 
         if self._broadcast_manager is not None:
-            self._print("Using broadcast TV mode (time-synchronized channels)")
+            log.info('using broadcast TV mode (time-synchronized channels)')
             return None
 
         # Fallback to all files mode
@@ -206,28 +208,28 @@ class ProcessManager:
     def _build_broadcast_channels(self):
         """Build broadcast TV-style channels."""
         if not hasattr(self._reader, 'search_channel_paths'):
-            self._print("Channel mode not supported by file reader")
+            log.info('channel mode not supported by file reader')
             return None
 
         channel_paths = self._reader.search_channel_paths()
 
         if len(channel_paths) == 0:
-            self._print("No channel folders found")
+            log.info('no channel folders found')
             return None
 
         manager = BroadcastChannelManager(self._broadcast_start_time)
 
-        self._print("Building broadcast channels...")
+        log.info('building broadcast channels')
 
         for channel_num in range(1, 14):
             if channel_num in channel_paths:
-                self._print(f"Channel {channel_num}:")
+                log.info('channel %d:', channel_num)
                 movies = self._get_movies_from_path(channel_paths[channel_num])
                 playlist = Playlist(sorted(movies))
                 manager.set_channel_playlist(channel_num, playlist)
 
                 total_duration = sum(m.duration for m in movies)
-                self._print(f"  Total: {len(movies)} files, {int(total_duration)}s loop")
+                log.info('  total: %d files, %ds loop', len(movies), int(total_duration))
 
         manager.set_default_playlist(Playlist([]))
         return manager
@@ -247,7 +249,7 @@ class ProcessManager:
             try:
                 self._handle_channel_change(channel, previous_channel)
             except Exception as e:
-                self._print(f"Channel worker error: {e}")
+                wlog.exception('worker error: %s', e)
 
     def _handle_channel_change(self, channel, previous_channel):
         """Handle rotary encoder channel changes."""
@@ -255,10 +257,10 @@ class ProcessManager:
             return
 
         if channel < 1 or channel > 13:
-            self._print(f"Channel {channel} out of range (1-13)")
+            wlog.warning('channel %d out of range (1-13)', channel)
             return
 
-        self._print(f"Switching from channel {previous_channel} to {channel}")
+        wlog.info('handle channel=%d prev=%d', channel, previous_channel)
 
         # Note: Don't stop players here - let _play_movie() handle it
         # This allows same-player-type transitions to use IPC (fast switching)
@@ -269,11 +271,11 @@ class ProcessManager:
             movie, seek_offset = self._broadcast_manager.calculate_broadcast_position(channel)
 
             if movie is None:
-                self._print(f"Channel {channel} is empty")
+                wlog.info('channel %d empty', channel)
                 self._playback_stopped = True
                 return
 
-            self._print(f"Channel {channel}: Playing {movie.filename}")
+            wlog.info('channel %d playing %s', channel, movie.filename)
             self._play_movie(movie, seek_offset)
             self._playback_stopped = False
         else:
@@ -317,7 +319,7 @@ class ProcessManager:
 
         # Get initial movie
         if self._broadcast_manager is not None:
-            self._print("Starting broadcast TV mode")
+            log.info('starting broadcast TV mode')
             movie, seek_offset = self._broadcast_manager.calculate_broadcast_position(self._current_channel)
         else:
             movie = self._playlist.get_next(self._is_random) if self._playlist else None
@@ -348,12 +350,13 @@ class ProcessManager:
                         time.sleep(self._wait_time)
 
                     if movie:
-                        self._print(f'Playing: {movie.filename} ({movie.content_type})')
+                        log.info('advance reason=eov file=%s type=%s',
+                                 movie.filename, movie.content_type)
                         self._play_movie(movie, seek_offset)
 
             # Check for file reader changes (USB insert/remove)
             if self._reader.is_changed() and not self._playback_stopped:
-                self._print("Media changed, rebuilding playlists")
+                log.info('media changed, rebuilding playlists')
                 self._stop_all_players()
 
                 self._broadcast_start_time = time.time()
@@ -369,11 +372,11 @@ class ProcessManager:
 
             time.sleep(0.1)  # Main loop delay
 
-        self._print("Process manager stopped")
+        log.info('process manager stopped')
 
     def quit(self, shutdown=False):
         """Shut down the program."""
-        self._print("Quitting process manager")
+        log.info('quit')
 
         if shutdown:
             os.system("sudo shutdown now")
@@ -384,7 +387,7 @@ class ProcessManager:
 
     def signal_quit(self, signal, frame):
         """Signal handler for quit."""
-        self._print("Received signal to quit")
+        log.info('received signal to quit')
         self.quit()
 
 
@@ -408,13 +411,54 @@ def _ensure_xdg_runtime_dir():
         print('Warning: could not prepare XDG_RUNTIME_DIR={0}: {1}'.format(runtime_dir, e))
 
 
+def _configure_logging(config):
+    """Set up structured logging.
+
+    File at /tmp/video_looper.log (truncated each run) for the verifier;
+    stdout for supervisor's existing tail-based debug workflow.
+    """
+    relay_debug = False
+    if config is not None:
+        relay_debug = config.getboolean('logging', 'relay_debug', fallback=False)
+
+    fmt = '%(asctime)s.%(msecs)03d %(threadName)s %(name)s %(levelname)s %(message)s'
+    datefmt = '%H:%M:%S'
+
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+    # Wipe any handlers a library may have installed at import.
+    root.handlers.clear()
+
+    formatter = logging.Formatter(fmt, datefmt=datefmt)
+
+    file_handler = logging.FileHandler('/tmp/video_looper.log', mode='w')
+    file_handler.setFormatter(formatter)
+    file_handler.setLevel(logging.DEBUG if relay_debug else logging.INFO)
+    root.addHandler(file_handler)
+
+    stream_handler = logging.StreamHandler(sys.stdout)
+    stream_handler.setFormatter(formatter)
+    stream_handler.setLevel(logging.INFO)
+    root.addHandler(stream_handler)
+
+    if relay_debug:
+        logging.getLogger('looper.relay').setLevel(logging.DEBUG)
+
+
 # Main entry point
 if __name__ == '__main__':
-    print('Starting Process Manager.')
-    _ensure_xdg_runtime_dir()
+    threading.current_thread().name = 'main'
+
     config_path = '/boot/video_looper.ini'
     if len(sys.argv) == 2:
         config_path = sys.argv[1]
+
+    bootstrap_config = configparser.ConfigParser()
+    bootstrap_config.read(config_path)
+    _configure_logging(bootstrap_config)
+
+    log.info('starting process manager config=%s', config_path)
+    _ensure_xdg_runtime_dir()
 
     manager = ProcessManager(config_path)
     signal.signal(signal.SIGTERM, manager.signal_quit)

@@ -1,0 +1,25 @@
+# Rapid encoder spin: 10 channel changes in ~1s.
+# Writes are spaced ~100ms — well wider than the switcher's ~5ms poll
+# cadence, so each write becomes a separate encoder publish (does not
+# coalesce at the encoder layer).
+#
+# Stage 1 (current architecture): the worker queue accumulates one launch
+# per intermediate channel, so coalescing is *expected to fail*.
+# Stage 2 (LatestSlot): only the final channel launches → flip to expect.
+#
+# expect: no-double-spawn
+# expect: cleanup-final-player
+# expect-fail: coalesce window=1.5 max-launches=2
+# delta_seconds  channel
+0.00  3
+0.10  4
+0.20  5
+0.30  6
+0.40  7
+0.50  8
+0.60  9
+0.70  10
+0.80  11
+0.90  12
+1.00  13
+4.00  2

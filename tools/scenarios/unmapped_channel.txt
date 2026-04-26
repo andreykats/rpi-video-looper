@@ -1,0 +1,12 @@
+# Verify channel 1 (unmapped) does not pulse any relay.
+# CHANNEL_MAP[1] = None, so change_channel() should publish the change but
+# skip the band/freq tuning entirely.
+#
+# setup: reset-state
+# expect: no-double-spawn
+# expect: cleanup-final-player
+# expect: unmapped-no-relay channel=1
+# delta_seconds  channel
+0.0   2
+3.0   1
+6.0   2
