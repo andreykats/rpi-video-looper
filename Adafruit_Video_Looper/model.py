@@ -116,7 +116,7 @@ class Playlist:
     def set_next(self, thing: Union[Movie, str, int]):
         if isinstance(thing, Movie):
             if (thing in self._movies):
-                self._next(thing)
+                self._next = thing
         elif isinstance(thing, str):
             if thing in self._movies:
                 self._next = self._movies[self._movies.index(thing)]
