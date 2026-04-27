@@ -1,15 +1,22 @@
-# Rapid encoder spin: 10 channel changes in ~1s.
+# Rapid encoder spin: 11 channel changes in ~1s.
 # Writes are spaced ~100ms — well wider than the switcher's ~5ms poll
 # cadence, so each write becomes a separate encoder publish (does not
 # coalesce at the encoder layer).
 #
-# Stage 2: with LatestSlot replacing the worker queue, only the final
-# channel of the burst should produce a player launch (plus the initial
-# startup launch). max-launches=2 covers startup + the final target.
+# Stage 3 (eager + reconcile): the worker acts on the first intent
+# immediately, then watches a brief reconcile window for newer intents
+# and switches again on each. Spins are no longer folded into one
+# launch — each click switches the player, mostly via fast IPC
+# (mpv loadfile / retroarch LOAD_CONTENT) rather than cold start.
+#
+# Hard invariants preserved:
+#   - no-double-spawn: every cold-start `start` log is preceded by a `stop`.
+#   - cleanup-final-player: at most one player left running at end of run.
+# The old "coalesce window=1.5 max-launches=2" predicate no longer
+# applies; spins now produce one switch per click by design.
 #
 # expect: no-double-spawn
 # expect: cleanup-final-player
-# expect: coalesce window=1.5 max-launches=2
 # delta_seconds  channel
 0.00  3
 0.10  4

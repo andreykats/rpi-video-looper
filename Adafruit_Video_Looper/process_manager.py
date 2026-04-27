@@ -274,20 +274,21 @@ class ProcessManager:
         log.info('advance reason=eov channel=%d', self._current_channel)
         self._eov_intent_slot.publish(EovIntent(channel=self._current_channel))
 
-    # Settle window for the worker — after taking a channel intent, wait
-    # this long for newer publishes to overwrite it before acting. Folds
-    # a fast encoder spin into a single launch instead of one per stop.
-    # Single-channel responsiveness cost is small (well under human-
-    # perception thresholds for "instant") and dominated by the
-    # modulator's 2s band-settle on cross-band changes anyway.
-    _CHANNEL_SETTLE_S = 0.15
+    # Reconcile window — after a launch, watch for newer publishes for
+    # this long. Subsequent intents during the window switch the player
+    # again (fast: MPV uses IPC loadfile, RetroArch uses LOAD_CONTENT
+    # over UDP). Cost is one extra launch per channel touched during a
+    # spin; benefit is zero added latency on isolated clicks.
+    _CHANNEL_RECONCILE_S = 0.15
 
     def _channel_worker(self):
         """Single owner of player launches.
 
         Wakes on either intent slot; drains channel-intent first so it
-        always wins on contention, then eov-intent. Each wake produces at
-        most one player launch (after a settle window for channel intents).
+        always wins on contention, then eov-intent. Acts on the first
+        intent immediately, then opens a brief reconcile window so a
+        spin keeps switching to the latest target without paying any
+        pre-launch latency on isolated clicks.
         """
         while not self._stop_event.is_set():
             if not self._worker_wake.wait(timeout=0.2):
@@ -305,41 +306,43 @@ class ProcessManager:
             if intent is None:
                 continue
 
-            # Settle window: only applies to encoder-driven channel
-            # intents. Startup and eov intents act immediately.
-            if isinstance(intent, ChannelIntent) and intent.reason == 'channel':
-                intent = self._settle_channel_intent(intent)
-
             try:
                 self._handle_intent(intent)
             except Exception as e:
                 wlog.exception('worker error: %s', e)
 
-    def _settle_channel_intent(self, intent):
-        """Wait briefly for a quiet slot before acting on a channel intent.
+            # Reconcile only for encoder-driven channel intents. Startup
+            # and eov are one-shots; nothing follows them in a burst.
+            if isinstance(intent, ChannelIntent) and intent.reason == 'channel':
+                self._reconcile_after_launch()
 
-        Each newer publish during the window restarts the timer, so a
-        continuous spin debounces to its final value.
+    def _reconcile_after_launch(self):
+        """After a launch, briefly watch for newer channel intents and
+        switch again if any arrive. Each newer intent restarts the
+        window so a continuous spin keeps re-targeting until quiet.
         """
-        deadline = time.monotonic() + self._CHANNEL_SETTLE_S
+        deadline = time.monotonic() + self._CHANNEL_RECONCILE_S
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                return intent
+                return
             if not self._worker_wake.wait(timeout=remaining):
-                return intent
+                return
             self._worker_wake.clear()
             newer = self._channel_intent_slot.take()
-            # eov can also arrive during the window; channel always wins,
-            # but we still need to clear the pending flag so main can
-            # publish more eov intents later.
+            # eov can arrive during the window; channel still wins, but
+            # we clear the pending flag so main can publish more later.
             extra_eov = self._eov_intent_slot.take()
             if extra_eov is not None:
                 with self._eov_pending_lock:
                     self._eov_pending = False
-            if newer is not None:
-                intent = newer
-                deadline = time.monotonic() + self._CHANNEL_SETTLE_S
+            if newer is None:
+                continue
+            try:
+                self._handle_intent(newer)
+            except Exception as e:
+                wlog.exception('worker error: %s', e)
+            deadline = time.monotonic() + self._CHANNEL_RECONCILE_S
 
     def _handle_intent(self, intent):
         if isinstance(intent, ChannelIntent):
