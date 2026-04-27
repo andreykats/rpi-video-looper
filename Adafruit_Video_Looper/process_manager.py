@@ -18,6 +18,7 @@ from .model import Playlist, Movie, BroadcastChannelManager
 from .rotary import ChannelSwitcher
 from .mpv import MPVPlayer
 from .retroarch import RetroArchPlayer
+from . import playlist_io
 
 log = logging.getLogger('looper.main')
 wlog = logging.getLogger('looper.worker')
@@ -33,6 +34,14 @@ class ChannelIntent:
 @dataclass
 class EovIntent:
     channel: int
+
+
+@dataclass
+class PlaylistIntent:
+    """Hot-swap a channel's Playlist. Published by the web layer after a
+    successful playlist.json write; consumed by the channel worker."""
+    channel: int
+    playlist: Playlist
 
 
 class ProcessManager:
@@ -90,6 +99,7 @@ class ProcessManager:
         self._worker_wake = threading.Event()
         self._channel_intent_slot = LatestSlot(self._worker_wake)
         self._eov_intent_slot = LatestSlot(self._worker_wake)
+        self._playlist_intent_slot = LatestSlot(self._worker_wake)
         self._eov_pending = False
         self._eov_pending_lock = threading.Lock()
         self._stop_event = threading.Event()
@@ -244,13 +254,27 @@ class ProcessManager:
 
         for channel_num in range(1, 14):
             if channel_num in channel_paths:
+                channel_dir = channel_paths[channel_num]
                 log.info('channel %d:', channel_num)
-                movies = self._get_movies_from_path(channel_paths[channel_num])
-                playlist = Playlist(sorted(movies))
+                movies = self._get_movies_from_path(channel_dir)
+
+                # If a playlist.json is present in the channel folder, it
+                # is the source of truth (web UI writes it). Otherwise
+                # fall back to alphabetical sort (legacy behavior).
+                json_entries = playlist_io.read_playlist_json(channel_dir)
+                if json_entries is not None:
+                    ordered = playlist_io.materialize(channel_dir, movies, json_entries)
+                    playlist = Playlist(ordered)
+                    source = 'json'
+                else:
+                    playlist = Playlist(sorted(movies))
+                    source = 'alpha'
+
                 manager.set_channel_playlist(channel_num, playlist)
 
-                total_duration = sum(m.duration for m in movies)
-                log.info('  total: %d files, %ds loop', len(movies), int(total_duration))
+                total_duration = sum(m.duration for m in playlist._movies)
+                log.info('  source=%s total: %d files, %ds loop',
+                         source, playlist.length(), int(total_duration))
 
         manager.set_default_playlist(Playlist([]))
         return manager
@@ -274,6 +298,17 @@ class ProcessManager:
         log.info('advance reason=eov channel=%d', self._current_channel)
         self._eov_intent_slot.publish(EovIntent(channel=self._current_channel))
 
+    def publish_playlist_intent(self, channel: int, playlist: Playlist):
+        """Public hook for the web layer to hot-swap a channel's Playlist.
+
+        Safe to call from any thread — the slot's lock makes the publish
+        atomic, and the worker thread is the sole consumer that mutates
+        the BroadcastChannelManager and any active player.
+        """
+        self._playlist_intent_slot.publish(
+            PlaylistIntent(channel=channel, playlist=playlist)
+        )
+
     # Reconcile window — after a launch, watch for newer publishes for
     # this long. Subsequent intents during the window switch the player
     # again (fast: MPV uses IPC loadfile, RetroArch uses LOAD_CONTENT
@@ -293,6 +328,7 @@ class ProcessManager:
         while not self._stop_event.is_set():
             if not self._worker_wake.wait(timeout=0.2):
                 continue
+            playlist_intent = self._playlist_intent_slot.take()
             channel_intent = self._channel_intent_slot.take()
             eov_intent = self._eov_intent_slot.take()
             self._worker_wake.clear()
@@ -300,6 +336,18 @@ class ProcessManager:
             if eov_intent is not None:
                 with self._eov_pending_lock:
                     self._eov_pending = False
+
+            # Apply playlist swap before playback evaluation. If a
+            # channel/eov intent is pending it will recompute playback
+            # against the new ordering, so suppress the intent's own
+            # auto-replay to avoid a redundant launch.
+            will_replay = channel_intent is not None or eov_intent is not None
+            if playlist_intent is not None:
+                try:
+                    self._handle_playlist_intent(playlist_intent,
+                                                 replay=not will_replay)
+                except Exception as e:
+                    wlog.exception('worker error (playlist): %s', e)
 
             # Channel beats eov when both are pending.
             intent = channel_intent or eov_intent
@@ -320,6 +368,9 @@ class ProcessManager:
         """After a launch, briefly watch for newer channel intents and
         switch again if any arrive. Each newer intent restarts the
         window so a continuous spin keeps re-targeting until quiet.
+
+        Playlist intents that arrive during the window are also drained
+        so they don't get stranded in the slot when the wake clears.
         """
         deadline = time.monotonic() + self._CHANNEL_RECONCILE_S
         while True:
@@ -329,6 +380,7 @@ class ProcessManager:
             if not self._worker_wake.wait(timeout=remaining):
                 return
             self._worker_wake.clear()
+            playlist_intent = self._playlist_intent_slot.take()
             newer = self._channel_intent_slot.take()
             # eov can arrive during the window; channel still wins, but
             # we clear the pending flag so main can publish more later.
@@ -336,6 +388,13 @@ class ProcessManager:
             if extra_eov is not None:
                 with self._eov_pending_lock:
                     self._eov_pending = False
+            if playlist_intent is not None:
+                try:
+                    will_replay = newer is not None
+                    self._handle_playlist_intent(playlist_intent,
+                                                 replay=not will_replay)
+                except Exception as e:
+                    wlog.exception('worker error (playlist reconcile): %s', e)
             if newer is None:
                 continue
             try:
@@ -377,6 +436,32 @@ class ProcessManager:
                 movie = self._playlist.get_next(self._is_random)
                 if movie is not None:
                     self._play_movie(movie)
+
+    def _handle_playlist_intent(self, intent, replay=True):
+        """Hot-swap a channel's Playlist on the broadcast manager.
+
+        If `replay` and the swapped channel is the current channel,
+        recompute the broadcast position against the new ordering and
+        re-launch the player. Suppress the replay when a channel/eov
+        intent is following — that intent will trigger the launch.
+        """
+        if self._broadcast_manager is None:
+            wlog.warning('playlist swap requested but broadcast mode disabled')
+            return
+        self._broadcast_manager.set_channel_playlist(intent.channel,
+                                                    intent.playlist)
+        wlog.info('playlist swapped channel=%d entries=%d',
+                  intent.channel, intent.playlist.length())
+        if not replay or intent.channel != self._current_channel:
+            return
+        movie, seek_offset = self._broadcast_manager.calculate_broadcast_position(
+            intent.channel
+        )
+        if movie is None:
+            self._playback_stopped = True
+            return
+        self._play_movie(movie, seek_offset)
+        self._playback_stopped = False
 
     def _handle_eov_intent(self, intent):
         """End-of-video advance — same path as a channel change but driven
@@ -441,6 +526,15 @@ class ProcessManager:
         # any producer publishes.
         self._channel_worker_thread.start()
         self._channel_switcher_thread.start()
+
+        # Web UI runs alongside the loop (gated on [web] enabled in config).
+        # Lazy import so the looper still starts on systems without the
+        # web deps installed.
+        try:
+            from . import web_server
+            web_server.start_web_thread(self)
+        except Exception as e:
+            log.warning('web UI failed to start: %s', e)
 
         # Initial player launch goes through the worker like every other
         # launch — keeps the single-owner invariant from minute zero.

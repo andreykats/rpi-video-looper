@@ -8,6 +8,7 @@ A Raspberry Pi video looper for **retro TV simulation**. Based on Adafruit Video
 - RF modulator hardware control via GPIO relays
 - Rotary encoder channel switching via I2C
 - Multi-player support: MPV for video, RetroArch for NES ROMs
+- In-process web UI (Starlette + uvicorn) for content/playlist/settings management — read-only for channel state; the encoder remains the only way to switch channels.
 
 **Target Hardware**: Raspberry Pi 5 (runs on remote Pi, NOT this development machine)
 **OS**: DietPi (requires `dtoverlay=vc4-kms-v3d` in `/boot/config.txt` for DRM/KMS)
@@ -72,11 +73,15 @@ Five scenarios live under `tools/scenarios/`: `slow`, `rapid_spin`, `cross_band`
 | `Adafruit_Video_Looper/retroarch.py` | RetroArch emulator wrapper (NES ROMs via Nestopia core) |
 | `Adafruit_Video_Looper/usb_drive.py` | USB drive file reader with pyudev monitoring |
 | `Adafruit_Video_Looper/directory.py` | Local directory file reader |
+| `Adafruit_Video_Looper/playlist_io.py` | Atomic read/write of `<channel>/playlist.json` |
+| `Adafruit_Video_Looper/web_server.py` | Starlette app + uvicorn thread; REST + `/ws` for the UI |
+| `Adafruit_Video_Looper/webui/` | Static frontend (HTML + JSX in-browser Babel + CSS) |
 | `assets/video_looper.ini` | Default configuration template |
 | `assets/video_looper.conf` | Supervisor program definition (installed to `/etc/supervisor/conf.d/`) |
 | `/boot/video_looper.ini` | **Runtime config location** (on Pi) |
 | `/tmp/video_looper.log` | Structured log (truncated each run) — fed to `tools/verify_run.py` |
 | `/var/lib/video_looper/previous_values.pkl` | Persisted band + per-band frequency state |
+| `/mnt/usbdrive*/<N>/playlist.json` | **Source of truth** for channel N's playlist when present (UI writes it). Falls back to alphabetical scan when absent. |
 | `install.sh` | One-shot Pi setup — system pkgs, pip install, supervisor, I2C, DRM overlay, state dir |
 | `run.sh` / `enable.sh` / `disable.sh` / `reload.sh` | Foreground run / supervisor autostart toggles / restart |
 | `tools/scenario_runner.py` | Drives the mock encoder FIFO from a scenario file |
@@ -91,6 +96,7 @@ Five scenarios live under `tools/scenarios/`: `slow`, `rapid_spin`, `cross_band`
 - **Synchronized playback**: All channels share a global start time
 - Switching channels seeks to correct position based on elapsed broadcast time
 - Uses `BroadcastChannelManager` class to calculate positions
+- **Playlist source**: if `<channel>/playlist.json` exists, channel order + repeats come from it. Otherwise the folder is scanned alphabetically (legacy behavior). The web UI is the editor — no manual JSON editing required.
 
 ### Legacy Mode (Fallback)
 - Single playlist of all videos
@@ -207,16 +213,18 @@ Key sections:
 - `[mpv]`: `extensions`, `sound`, `hwdec`, `drm_connector`, `extra_args`
 - `[retroarch]`: `extensions`, `core_path`, `video_driver`, `video_context_driver`, `audio_driver`, ...
 - `[directory]`: path for local directory mode
-- `[usb_drive]`: mount path for USB drive mode
+- `[usb_drive]`: `mount_path`, `readonly` (default `false` — required for the web UI to write `playlist.json`. Existing mounts won't pick up the change without remount/replug.)
+- `[web]`: `enabled`, `port` (default 80), `bind` (default 0.0.0.0). When enabled, the looper starts a Starlette+uvicorn server in a daemon thread.
 
 ## Threading Model
 
-Single Python process, four threads. GIL means only one thread runs Python bytecode at a time; multi-core utilization comes from subprocesses (mpv, retroarch).
+Single Python process, five threads (with web UI enabled). GIL means only one thread runs Python bytecode at a time; multi-core utilization comes from subprocesses (mpv, retroarch).
 
 - **`main`** (`process_manager.run`): polls `is_playing()`, posts eov intents to `_eov_intent_slot`, watches file reader. **Never launches players.**
 - **`encoder`** (`ChannelSwitcher.start`): polls the encoder backend at ~5 ms, publishes `ChannelIntent` to `_channel_intent_slot` and `(band, freq)` to `_relay_target_slot` on changes.
-- **`channel_worker`** (`ProcessManager._channel_worker`): waits on the shared worker wake event, takes channel-intent first then eov-intent, applies the 150 ms settle window for channel intents, then calls `_play_movie`. Sole owner of subprocess spawns.
+- **`channel_worker`** (`ProcessManager._channel_worker`): waits on the shared worker wake event, takes channel-intent first then eov-intent then playlist-intent, applies the 150 ms settle window for channel intents, then calls `_play_movie`. Sole owner of subprocess spawns.
 - **`relay_executor`** (`ChannelSwitcher._relay_executor`): waits on `_relay_wake`, takes latest target, computes min pulse train, drives GPIO. Re-takes after each train so mid-train target changes are absorbed.
+- **`web`** (`web_server.start_web_thread`): runs uvicorn for the Starlette app. Reads `pm` state, publishes `PlaylistIntent` to `_playlist_intent_slot` after a successful playlist write. Never publishes channel intents — the encoder is authoritative.
 
 All cross-thread communication is via `LatestSlot`s. **No `queue.Queue`, no module-global queues.** No `Lock` outside the slots' internal locks and the small `_eov_pending_lock`.
 
@@ -241,6 +249,19 @@ ls -la /dev/dri/
 - `mpv` - video playback (system package)
 - `retroarch` - emulation (system package)
 - `nestopia_libretro.so` - NES core at `/usr/lib/aarch64-linux-gnu/libretro/`
+
+## Web UI
+
+Reachable at `http://<pi-ip>/` (port 80) on the LAN. **No authentication** — the network is trusted. Disable with `[web] enabled = false` in `/boot/video_looper.ini`.
+
+What it can do:
+- Read-only: current channel, per-channel playback position, log stream, USB storage usage.
+- Edit: per-channel playlist (drag-drop reorder, repeat counts), file/folder rename + delete on USB, whitelisted looper INI keys (`is_random`, `wait_time`, `mpv.{sound,video_stretch,hwdec}`, `retroarch.{verbose,audio_enable}`, `logging.relay_debug`).
+- Trigger: reboot the Pi.
+
+What it does **not** do: switch channels (rotary encoder is the only input), edit network config, manage hostname/IP.
+
+Saving config writes `/boot/video_looper.ini` then runs `sudo supervisorctl restart video_looper` after a 250 ms delay. The web server is in-process, so the UI's WebSocket disconnects during the restart and reconnects on the way back up. The UI shows a "RESTARTING" overlay during this window.
 
 ## Common Issues
 
