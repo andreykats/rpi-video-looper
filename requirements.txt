@@ -1,3 +1,3 @@
 pyudev>=0.23.1
 smbus
-RPi.GPIO
+rpi-lgpio
