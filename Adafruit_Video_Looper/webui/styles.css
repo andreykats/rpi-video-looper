@@ -1100,8 +1100,8 @@ body {
 /* Clip block */
 .clip {
   position: relative;
-  height: 40px;
-  margin: 3px 0;
+  align-self: stretch;
+  margin: 0;
   background: var(--clip-bg);
   border: 1px solid var(--clip-stripe);
   border-left: none;
@@ -1696,8 +1696,8 @@ body {
 /* Clip block — neutral palette (kind colors removed) */
 .clip {
   position: relative;
-  height: 40px;
-  margin: 3px 0;
+  align-self: stretch;
+  margin: 0;
   background: #1f1c1a;
   border: 1px solid #3a3530;
   display: flex;
