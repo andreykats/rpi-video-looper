@@ -841,7 +841,7 @@ body {
 }
 .tl-header-bar {
   display: grid;
-  grid-template-columns: 200px 1fr;
+  grid-template-columns: 144px 1fr;
   background: linear-gradient(180deg, #3a3e42, #2a2e32);
   border-bottom: 2px solid #4a4e52;
   padding: 8px 12px;
@@ -871,13 +871,13 @@ body {
   position: sticky;
   left: 0;
   z-index: 3;
-  width: 200px;
+  width: 144px;
   flex-shrink: 0;
   display: grid;
-  grid-template-columns: 36px 1fr 16px;
+  grid-template-columns: 32px 1fr 8px;
   align-items: center;
-  gap: 6px;
-  padding: 5px 8px;
+  gap: 4px;
+  padding: 4px 6px;
   background: #14161a;
   border-right: 2px solid #4a4e52;
 }
@@ -995,7 +995,7 @@ body {
   position: sticky;
   left: 0;
   z-index: 5;
-  width: 200px;
+  width: 144px;
   flex-shrink: 0;
   background: #0a0c10;
   border-right: 2px solid #4a4e52;
