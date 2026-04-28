@@ -1033,7 +1033,7 @@ body {
   top: 4px;
   left: 4px;
   font-family: 'VT323', monospace;
-  font-size: var(--fs-lg);
+  font-size: var(--fs-md);
   color: var(--phosphor);
   letter-spacing: 0.04em;
   white-space: nowrap;
