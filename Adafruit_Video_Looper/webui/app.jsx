@@ -94,7 +94,6 @@ function App() {
   const [logOpen, setLogOpen] = useState(false);
   const [wsState, setWsState] = useState('connecting');
   const [restarting, setRestarting] = useState(false);
-  const [search, setSearch] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const mountRoot = (initialState.mountRoots && initialState.mountRoots[0]) || '/mnt/usbdrive';
 
@@ -542,8 +541,6 @@ function App() {
         <VideoPoolSidebar
           pool={pool}
           onDragStart={handlePoolDragStart}
-          search={search}
-          setSearch={setSearch}
           usedIds={usedIds}
           onRename={handleRenameFile}
           onDelete={handleDeleteFile}

@@ -73,8 +73,7 @@ function LED({ on, color = 'red', label }) {
 }
 
 // ─────────── Video Pool Sidebar ───────────
-function VideoPoolSidebar({ pool, onDragStart, search, setSearch, usedIds, onRename, onDelete, onRenameFolder, onDeleteFolder }) {
-  const q = search.trim().toLowerCase();
+function VideoPoolSidebar({ pool, onDragStart, usedIds, onRename, onDelete, onRenameFolder, onDeleteFolder }) {
   const [hideUsed, setHideUsed] = React.useState(false);
   const [sortBy, setSortBy] = React.useState('name'); // name | size
 
@@ -126,15 +125,8 @@ function VideoPoolSidebar({ pool, onDragStart, search, setSearch, usedIds, onRen
     if (onDeleteFolder) onDeleteFolder(node.path);
   };
 
-  const filtered = pool.filter(v => {
-    if (hideUsed && usedIds && usedIds.has(v.id)) return false;
-    if (!q) return true;
-    return v.name.toLowerCase().includes(q) ||
-           (v.path || '').toLowerCase().includes(q);
-  });
+  const filtered = pool.filter(v => !(hideUsed && usedIds && usedIds.has(v.id)));
 
-  // We always build the tree from the full path of each file; the search
-  // filter just narrows which files are visible.
   const tree = React.useMemo(() => {
     return buildTreeFromList(filtered, sortBy);
   }, [filtered, sortBy]);
@@ -147,7 +139,7 @@ function VideoPoolSidebar({ pool, onDragStart, search, setSearch, usedIds, onRen
   }, [tree]);
 
   const [expanded, setExpanded] = React.useState(() => new Set(['/']));
-  const effectiveExpanded = q ? allFolderPaths : expanded;
+  const effectiveExpanded = expanded;
   const toggle = (p) => {
     setExpanded(prev => {
       const n = new Set(prev);
@@ -174,7 +166,6 @@ function VideoPoolSidebar({ pool, onDragStart, search, setSearch, usedIds, onRen
     });
   };
 
-  const totalBytes = pool.reduce((a, v) => a + (v.sizeBytes || 0), 0);
   const usedCount = usedIds ? usedIds.size : 0;
 
   const renderNode = (node, depth = 0) => {
@@ -187,8 +178,8 @@ function VideoPoolSidebar({ pool, onDragStart, search, setSearch, usedIds, onRen
       <React.Fragment key={node.path}>
         <div
           className={`tree-row tree-folder${isMenuTarget ? ' menu-target' : ''}`}
-          style={{ paddingLeft: 8 + depth * 14 }}
-          onClick={() => !q && !isRenamingThis && toggle(node.path)}
+          style={{ paddingLeft: 6 + depth * 8 }}
+          onClick={() => !isRenamingThis && toggle(node.path)}
           onDoubleClick={(e) => { e.stopPropagation(); startRenameFolder(node); }}
           onContextMenu={(e) => {
             e.preventDefault();
@@ -228,7 +219,7 @@ function VideoPoolSidebar({ pool, onDragStart, search, setSearch, usedIds, onRen
                 <div
                   key={v.id}
                   className={`tree-row tree-file pool-item${used ? ' used' : ''}${isFileMenuTarget ? ' menu-target' : ''}`}
-                  style={{ paddingLeft: 8 + (depth + 1) * 14 }}
+                  style={{ paddingLeft: 6 + (depth + 1) * 8 }}
                   draggable={!isFileRenaming}
                   onDragStart={(e) => onDragStart(e, v, 'pool')}
                   onDoubleClick={() => startRenameFile(v)}
@@ -273,11 +264,6 @@ function VideoPoolSidebar({ pool, onDragStart, search, setSearch, usedIds, onRen
         <EngravedLabel size="sm">USB SOURCE</EngravedLabel>
         <span className="pool-count">{filtered.length} FILES</span>
       </div>
-      <div className="pool-mount">
-        <span className="pool-mount-led" />
-        <span className="pool-mount-label">{tree.path || '/mnt/usbdrive'} · {fmtBytes(totalBytes)}</span>
-      </div>
-
       <div className="pool-toolbar">
         <div className="pool-tb-group">
           {(() => {
@@ -316,21 +302,8 @@ function VideoPoolSidebar({ pool, onDragStart, search, setSearch, usedIds, onRen
         </div>
       </div>
 
-      <div className="pool-search">
-        <input
-          type="text"
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          placeholder="SEARCH..."
-          className="pool-input"
-        />
-      </div>
       <div className="pool-list">
-        {filtered.length === 0 ? (
-          <div className="pool-empty">— NO MATCHES —</div>
-        ) : (
-          tree.childList.map(c => renderNode(c, 0)) || []
-        )}
+        {tree.childList.map(c => renderNode(c, 0))}
         {/* Files at the root mount level */}
         {tree.files && tree.files.map(v => {
           const used = usedIds && usedIds.has(v.id);
