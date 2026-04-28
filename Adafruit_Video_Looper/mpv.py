@@ -72,6 +72,9 @@ class MPVPlayer:
         self._sound = config.get('mpv', 'sound').lower()
         self._hwdec = config.get('mpv', 'hwdec', fallback='auto')
         self._drm_connector = config.get('mpv', 'drm_connector', fallback='')
+        # Pinning a mode (e.g. 1280x720@60) keeps the HDMI link from
+        # re-training on player handoff — see CLAUDE.md / mpv VO docs.
+        self._drm_mode = config.get('mpv', 'drm_mode', fallback='').strip()
         self._video_stretch = config.getboolean('mpv', 'video_stretch', fallback=False)
 
     def supported_extensions(self):
@@ -289,6 +292,9 @@ class MPVPlayer:
         # Handle DRM connector if specified
         if self._drm_connector:
             args.extend(['--drm-connector={}'.format(self._drm_connector)])
+
+        if self._drm_mode:
+            args.extend(['--drm-mode={}'.format(self._drm_mode)])
 
         # Handle seek position (broadcast mode)
         if seek_position is not None and seek_position > 0:

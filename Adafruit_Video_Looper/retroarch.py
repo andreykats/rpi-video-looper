@@ -48,6 +48,12 @@ class RetroArchPlayer:
         self._autosave_interval = config.getint('retroarch', 'autosave_interval', fallback=0)
         self._savestate_auto_load = config.getboolean('retroarch', 'savestate_auto_load', fallback=True)
         self._verbose = config.getboolean('retroarch', 'verbose', fallback=False)
+        # Pinning the fullscreen mode keeps RetroArch from picking a different
+        # HDMI timing than mpv / the kernel boot mode, which would force the
+        # link to re-train on player handoff and confuse the RF modulator.
+        self._fullscreen_width = config.get('retroarch', 'fullscreen_width', fallback='').strip()
+        self._fullscreen_height = config.get('retroarch', 'fullscreen_height', fallback='').strip()
+        self._refresh_rate = config.get('retroarch', 'refresh_rate', fallback='').strip()
         self._extra_args = config.get('retroarch', 'extra_args', fallback='').split()
 
     def supported_extensions(self):
@@ -185,6 +191,12 @@ class RetroArchPlayer:
             'video_font_enable = "false"',
             'onscreen_notifications_enable = "false"',
         ]
+        if self._fullscreen_width:
+            lines.append('video_fullscreen_x = "{}"'.format(self._fullscreen_width))
+        if self._fullscreen_height:
+            lines.append('video_fullscreen_y = "{}"'.format(self._fullscreen_height))
+        if self._refresh_rate:
+            lines.append('video_refresh_rate = "{}"'.format(self._refresh_rate))
         if self._verbose:
             # RetroArch's own logger fflushes; capturing the child's stderr
             # to a Python file loses output if RetroArch dies before flushing.
