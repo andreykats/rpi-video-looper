@@ -44,6 +44,16 @@ function buildInitialPositions(channelData) {
   return out;
 }
 
+function buildChannelDirs(channelData) {
+  const out = {};
+  for (const [chStr, info] of Object.entries(channelData || {})) {
+    if (info && info.channelDir) {
+      out[parseInt(chStr, 10)] = info.channelDir;
+    }
+  }
+  return out;
+}
+
 function App() {
   const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
   const initial = window.__INITIAL_STATE;
@@ -56,6 +66,9 @@ function App() {
   );
   const [positionsByChannel, setPositionsByChannel] = useState(
     () => buildInitialPositions(initialState.broadcast.channels)
+  );
+  const [channelDirs, setChannelDirs] = useState(
+    () => buildChannelDirs(initialState.broadcast.channels)
   );
   const [currentChannel, setCurrentChannel] = useState(initialState.currentChannel);
   const [activePlayer, setActivePlayer] = useState(initialState.activePlayer);
@@ -112,6 +125,7 @@ function App() {
           .then(([st, p, store]) => {
             setPlaylists(buildInitialPlaylists(st.broadcast.channels));
             setPositionsByChannel(buildInitialPositions(st.broadcast.channels));
+            setChannelDirs(buildChannelDirs(st.broadcast.channels));
             setCurrentChannel(st.currentChannel);
             setActivePlayer(st.activePlayer);
             setPlaybackStopped(st.playbackStopped);
@@ -129,6 +143,7 @@ function App() {
         const st = env.payload;
         setPlaylists(buildInitialPlaylists(st.broadcast.channels));
         setPositionsByChannel(buildInitialPositions(st.broadcast.channels));
+        setChannelDirs(buildChannelDirs(st.broadcast.channels));
         setCurrentChannel(st.currentChannel);
         setActivePlayer(st.activePlayer);
         setPlaybackStopped(st.playbackStopped);
@@ -222,8 +237,12 @@ function App() {
   };
 
   const handleAddPoolItem = async (chan, poolItem, idx) => {
-    const channelDir = `${mountRoot}/${chan}`;
-    const fileInChannel = poolItem.path === channelDir;
+    const channelDir = channelDirs[chan];
+    if (!channelDir) {
+      window.alert(`Channel ${chan} has no folder on the USB drive.`);
+      return;
+    }
+    const fileInChannel = poolItem.absParent === channelDir;
     const newEntry = {
       filename: poolItem.name,
       repeat: 1,
@@ -326,12 +345,14 @@ function App() {
   const usedIds = useMemo(() => {
     const s = new Set();
     for (const ch of CHANNELS) {
+      const dir = channelDirs[ch.num];
+      if (!dir) continue;
       for (const entry of (playlists[ch.num] || [])) {
-        s.add(`${mountRoot}/${ch.num}/${entry.filename}`);
+        s.add(`${dir}/${entry.filename}`);
       }
     }
     return s;
-  }, [playlists, mountRoot]);
+  }, [playlists, channelDirs]);
 
   const phosphor = PHOSPHOR[t.phosphor] || PHOSPHOR.amber;
   const curPos = positionsByChannel[currentChannel];

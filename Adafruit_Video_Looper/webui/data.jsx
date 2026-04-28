@@ -16,15 +16,29 @@ const CHANNELS = [
 ];
 
 // Flatten the server's pool tree into a list suitable for the sidebar.
-// id = absolute path (stable per file).
+// `id` is the absolute path (used by API calls). `path` is a display
+// path with the mount-root prefix stripped so the sidebar tree starts
+// at channel folders, not /mnt/usbdriveN.
 function flattenPool(serverPool) {
+  // Sort longest-first so a file under /mnt/usbdrive10 isn't matched
+  // against /mnt/usbdrive1's prefix.
+  const mountRoots = (serverPool.mountRoots || [])
+    .slice().sort((a, b) => b.length - a.length);
+  const stripMount = (absPath) => {
+    for (const mr of mountRoots) {
+      if (absPath === mr) return '/';
+      if (absPath.startsWith(mr + '/')) return absPath.slice(mr.length);
+    }
+    return absPath;
+  };
   const out = [];
   const walk = (node) => {
     for (const f of (node.files || [])) {
       out.push({
         id: f.path,
         name: f.name,
-        path: node.path,
+        path: stripMount(node.path),
+        absParent: node.path,
         fileType: f.fileType,
         sizeBytes: f.sizeBytes,
       });
