@@ -752,7 +752,7 @@ function SettingsModal({ open, onClose, config, storage, onSave, onReboot, resta
 function deepClone(o) { return JSON.parse(JSON.stringify(o || {})); }
 
 // ─────────── Log Drawer — collapsible bottom panel for ws log stream ───────────
-function LogDrawer({ logs, open, setOpen, wsState }) {
+function LogDrawer({ logs, open }) {
   const scrollRef = React.useRef(null);
   const [paused, setPaused] = React.useState(false);
   const [hovering, setHovering] = React.useState(false);
@@ -763,35 +763,28 @@ function LogDrawer({ logs, open, setOpen, wsState }) {
     if (el) el.scrollTop = el.scrollHeight;
   }, [logs, open, paused, hovering]);
 
+  if (!open) return null;
   const recent = logs.slice(-200);
 
   return (
-    <div className={`log-drawer${open ? ' open' : ''}`}>
-      <div className="log-drawer-tab" onClick={() => setOpen(o => !o)}>
-        <span className={`log-drawer-led${wsState === 'open' ? ' on' : ''}`} />
-        <EngravedLabel size="xs">{open ? 'HIDE LOG' : 'LOG'}</EngravedLabel>
-        <span className="log-drawer-count">{logs.length}</span>
-        {wsState !== 'open' && <span className="log-drawer-warn">DISCONNECTED</span>}
+    <div className="log-drawer open">
+      <div className="log-drawer-body"
+           ref={scrollRef}
+           onMouseEnter={() => setHovering(true)}
+           onMouseLeave={() => setHovering(false)}>
+        {recent.length === 0 ? (
+          <div className="log-empty">— no log lines yet —</div>
+        ) : (
+          recent.map((e, i) => (
+            <div key={i} className={`log-line level-${(e.level||'info').toLowerCase()}`}>
+              <span className="log-ts">{fmtLogTs(e.ts)}</span>
+              <span className="log-level">{e.level}</span>
+              <span className="log-name">{e.name}</span>
+              <span className="log-msg">{e.msg}</span>
+            </div>
+          ))
+        )}
       </div>
-      {open && (
-        <div className="log-drawer-body"
-             ref={scrollRef}
-             onMouseEnter={() => setHovering(true)}
-             onMouseLeave={() => setHovering(false)}>
-          {recent.length === 0 ? (
-            <div className="log-empty">— no log lines yet —</div>
-          ) : (
-            recent.map((e, i) => (
-              <div key={i} className={`log-line level-${(e.level||'info').toLowerCase()}`}>
-                <span className="log-ts">{fmtLogTs(e.ts)}</span>
-                <span className="log-level">{e.level}</span>
-                <span className="log-name">{e.name}</span>
-                <span className="log-msg">{e.msg}</span>
-              </div>
-            ))
-          )}
-        </div>
-      )}
     </div>
   );
 }

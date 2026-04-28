@@ -521,7 +521,12 @@ function App() {
 
         <div className="chassis-top-r">
           <div className="transport">
-            <HwButton label="◼ STOP" color="beige" disabled />
+            <HwButton
+              label="☰ LOGS"
+              color="beige"
+              onClick={() => setLogOpen(o => !o)}
+              indicator={wsState === 'open'}
+            />
             <HwButton label="▶ SYNC" color="green" disabled />
             <HwButton label="● REC" color="red" disabled />
             <HwButton label="⟳ REBOOT" color="beige" onClick={() => {
@@ -599,12 +604,7 @@ function App() {
         restarting={restarting}
       />
 
-      <LogDrawer
-        logs={logs}
-        open={logOpen}
-        setOpen={setLogOpen}
-        wsState={wsState}
-      />
+      <LogDrawer logs={logs} open={logOpen} />
 
       {typeof TweaksPanel === 'function' && (() => {
         const params = new URLSearchParams(window.location.search);
