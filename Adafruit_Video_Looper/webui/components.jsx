@@ -1,5 +1,7 @@
 // Format seconds as M:SS or H:MM:SS
 function fmtDur(sec) {
+  if (!sec || !isFinite(sec)) return '0:00';
+  sec = Math.floor(sec);
   const h = Math.floor(sec / 3600);
   const m = Math.floor((sec % 3600) / 60);
   const s = sec % 60;
@@ -15,8 +17,16 @@ function fmtClock(minFromStart, baseHour = 18) {
   return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
 }
 
+function fmtBytes(n) {
+  if (!n || !isFinite(n)) return '0 B';
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+  if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
+  return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
+}
+
 // Chunky labeled hardware button — beige cap with engraved label
-function HwButton({ label, color = 'beige', lit = false, onClick, big = false, indicator }) {
+function HwButton({ label, color = 'beige', lit = false, onClick, disabled = false, big = false, indicator }) {
   const palette = {
     beige:  { face: '#c8ccd0', edge: '#7a7e82', text: '#1c1e22' },
     orange: { face: '#d97740', edge: '#a85020', text: '#1a0f08' },
@@ -27,8 +37,9 @@ function HwButton({ label, color = 'beige', lit = false, onClick, big = false, i
   const c = palette[color];
   return (
     <button
-      onClick={onClick}
-      className="hw-btn"
+      onClick={disabled ? undefined : onClick}
+      disabled={disabled}
+      className={`hw-btn${disabled ? ' disabled' : ''}`}
       style={{
         '--face': c.face,
         '--edge': c.edge,
@@ -51,57 +62,6 @@ function EngravedLabel({ children, size = 10 }) {
   );
 }
 
-// Dymo label tape — black tape with embossed white text
-function DymoTape({ children, color = 'black' }) {
-  return (
-    <span className="dymo" data-color={color}>{children}</span>
-  );
-}
-
-// Editable Dymo tape — click to rename
-function EditableDymo({ value, onChange }) {
-  const [editing, setEditing] = React.useState(false);
-  const [draft, setDraft] = React.useState(value);
-  const inputRef = React.useRef(null);
-  React.useEffect(() => { setDraft(value); }, [value]);
-  React.useEffect(() => {
-    if (editing && inputRef.current) {
-      inputRef.current.focus();
-      inputRef.current.select();
-    }
-  }, [editing]);
-  const commit = () => {
-    const v = draft.trim().toUpperCase();
-    if (v && v !== value) onChange(v);
-    else setDraft(value);
-    setEditing(false);
-  };
-  if (editing) {
-    return (
-      <input
-        ref={inputRef}
-        className="dymo dymo-input"
-        value={draft}
-        maxLength={12}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') commit();
-          else if (e.key === 'Escape') { setDraft(value); setEditing(false); }
-        }}
-      />
-    );
-  }
-  return (
-    <span
-      className="dymo dymo-editable"
-      title="Click to rename channel"
-      onClick={() => setEditing(true)}>
-      {value}
-    </span>
-  );
-}
-
 // LED indicator
 function LED({ on, color = 'red', label }) {
   return (
@@ -116,15 +76,12 @@ function LED({ on, color = 'red', label }) {
 function VideoPoolSidebar({ pool, onDragStart, search, setSearch, usedIds, onRename, onDelete, onRenameFolder, onDeleteFolder }) {
   const q = search.trim().toLowerCase();
   const [hideUsed, setHideUsed] = React.useState(false);
-  const [sortBy, setSortBy] = React.useState('name'); // name | duration | kind
+  const [sortBy, setSortBy] = React.useState('name'); // name | size
 
-  // Right-click menu state (files or folders)
   const [menu, setMenu] = React.useState(null);
-  // Inline rename state
-  const [renaming, setRenaming] = React.useState(null); // { kind, key } where key is video.id or folder.path
+  const [renaming, setRenaming] = React.useState(null);
   const [renameValue, setRenameValue] = React.useState('');
 
-  // Close menu on any click/escape/scroll
   React.useEffect(() => {
     if (!menu) return;
     const close = () => setMenu(null);
@@ -151,9 +108,10 @@ function VideoPoolSidebar({ pool, onDragStart, search, setSearch, usedIds, onRen
   };
   const commitRename = () => {
     if (!renaming) return;
-    if (renameValue.trim()) {
-      if (renaming.kind === 'file' && onRename) onRename(renaming.key, renameValue.trim());
-      else if (renaming.kind === 'folder' && onRenameFolder) onRenameFolder(renaming.key, renameValue.trim());
+    const nm = renameValue.trim();
+    if (nm) {
+      if (renaming.kind === 'file' && onRename) onRename(renaming.key, nm);
+      else if (renaming.kind === 'folder' && onRenameFolder) onRenameFolder(renaming.key, nm);
     }
     setRenaming(null);
   };
@@ -172,29 +130,13 @@ function VideoPoolSidebar({ pool, onDragStart, search, setSearch, usedIds, onRen
     if (hideUsed && usedIds && usedIds.has(v.id)) return false;
     if (!q) return true;
     return v.name.toLowerCase().includes(q) ||
-           v.kind.toLowerCase().includes(q) ||
            (v.path || '').toLowerCase().includes(q);
   });
 
-  const kindColor = {
-    cartoon: '#e8a838', news: '#5a9fd4', promo: '#c97cb8',
-    ad: '#d97740', sitcom: '#7ab87a', show: '#a884d4',
-    movie: '#d44a4a', doc: '#5ab8a8', game: '#c060ff', tech: '#888',
-  };
-
+  // We always build the tree from the full path of each file; the search
+  // filter just narrows which files are visible.
   const tree = React.useMemo(() => {
-    const t = buildPoolTree(filtered);
-    // Apply sort to each folder's files
-    const sortFiles = (n) => {
-      n.files.sort((a, b) => {
-        if (sortBy === 'duration') return b.duration - a.duration;
-        if (sortBy === 'kind') return a.kind.localeCompare(b.kind) || a.name.localeCompare(b.name);
-        return a.name.localeCompare(b.name);
-      });
-      n.childList.forEach(sortFiles);
-    };
-    sortFiles(t);
-    return t;
+    return buildTreeFromList(filtered, sortBy);
   }, [filtered, sortBy]);
 
   const allFolderPaths = React.useMemo(() => {
@@ -205,7 +147,6 @@ function VideoPoolSidebar({ pool, onDragStart, search, setSearch, usedIds, onRen
   }, [tree]);
 
   const [expanded, setExpanded] = React.useState(() => new Set(['/']));
-  // When searching, force-expand everything so matches surface
   const effectiveExpanded = q ? allFolderPaths : expanded;
   const toggle = (p) => {
     setExpanded(prev => {
@@ -216,8 +157,6 @@ function VideoPoolSidebar({ pool, onDragStart, search, setSearch, usedIds, onRen
   };
   const expandAll = () => setExpanded(new Set(allFolderPaths));
   const collapseAll = () => setExpanded(new Set(['/']));
-
-  // Expand/collapse all descendants of a specific folder
   const expandDescendants = (node) => {
     setExpanded(prev => {
       const n = new Set(prev);
@@ -235,14 +174,13 @@ function VideoPoolSidebar({ pool, onDragStart, search, setSearch, usedIds, onRen
     });
   };
 
-  const totalDur = pool.reduce((a, v) => a + (v.duration || 0), 0);
-  const totalGB = (pool.length * 0.7).toFixed(1);
+  const totalBytes = pool.reduce((a, v) => a + (v.sizeBytes || 0), 0);
   const usedCount = usedIds ? usedIds.size : 0;
 
   const renderNode = (node, depth = 0) => {
     const open = effectiveExpanded.has(node.path);
     const fileCount = countFiles(node);
-    if (fileCount === 0) return null; // hide empty folders (when filters strip everything)
+    if (fileCount === 0 && depth > 0) return null;
     const isMenuTarget = menu && menu.kind === 'folder' && menu.node.path === node.path;
     const isRenamingThis = renaming && renaming.kind === 'folder' && renaming.key === node.path;
     return (
@@ -300,7 +238,6 @@ function VideoPoolSidebar({ pool, onDragStart, search, setSearch, usedIds, onRen
                     setMenu({ kind: 'file', x: e.clientX, y: e.clientY, video: v });
                   }}>
                   <span className="tree-twist tree-twist-leaf">·</span>
-                  <span className="pool-kind" style={{ background: kindColor[v.kind] }} />
                   {isFileRenaming ? (
                     <input
                       autoFocus
@@ -318,8 +255,8 @@ function VideoPoolSidebar({ pool, onDragStart, search, setSearch, usedIds, onRen
                   ) : (
                     <div className="pool-name">{v.name}</div>
                   )}
-                  {used && !isFileRenaming && <span className="pool-used-dot" title="In playlist" />}
-                  <div className="pool-dur">{v.fileType === 'nes' ? 'ROM' : fmtDur(v.duration)}</div>
+                  {used && !isFileRenaming && <span className="pool-used-dot" title="In a playlist" />}
+                  <div className="pool-dur">{v.fileType === 'nes' ? 'ROM' : fmtBytes(v.sizeBytes)}</div>
                 </div>
               );
             })}
@@ -338,14 +275,13 @@ function VideoPoolSidebar({ pool, onDragStart, search, setSearch, usedIds, onRen
       </div>
       <div className="pool-mount">
         <span className="pool-mount-led" />
-        <span className="pool-mount-label">/dev/sdb1 · {totalGB} GB</span>
+        <span className="pool-mount-label">{tree.path || '/mnt/usbdrive'} · {fmtBytes(totalBytes)}</span>
       </div>
 
-      {/* View / Sort toolbar */}
       <div className="pool-toolbar">
         <div className="pool-tb-group">
           {(() => {
-            const anyExpanded = expanded.size > 1; // more than just root
+            const anyExpanded = expanded.size > 1;
             return (
               <button
                 className="pool-tb-btn"
@@ -374,8 +310,7 @@ function VideoPoolSidebar({ pool, onDragStart, search, setSearch, usedIds, onRen
             <span>SORT</span>
             <select value={sortBy} onChange={e => setSortBy(e.target.value)}>
               <option value="name">NAME</option>
-              <option value="duration">DURATION</option>
-              <option value="kind">TYPE</option>
+              <option value="size">SIZE</option>
             </select>
           </label>
         </div>
@@ -394,11 +329,28 @@ function VideoPoolSidebar({ pool, onDragStart, search, setSearch, usedIds, onRen
         {filtered.length === 0 ? (
           <div className="pool-empty">— NO MATCHES —</div>
         ) : (
-          tree.childList.map(c => renderNode(c, 0))
+          tree.childList.map(c => renderNode(c, 0)) || []
         )}
+        {/* Files at the root mount level */}
+        {tree.files && tree.files.map(v => {
+          const used = usedIds && usedIds.has(v.id);
+          return (
+            <div
+              key={v.id}
+              className={`tree-row tree-file pool-item${used ? ' used' : ''}`}
+              style={{ paddingLeft: 8 }}
+              draggable
+              onDragStart={(e) => onDragStart(e, v, 'pool')}>
+              <span className="tree-twist tree-twist-leaf">·</span>
+              <div className="pool-name">{v.name}</div>
+              {used && <span className="pool-used-dot" title="In a playlist" />}
+              <div className="pool-dur">{v.fileType === 'nes' ? 'ROM' : fmtBytes(v.sizeBytes)}</div>
+            </div>
+          );
+        })}
       </div>
       <div className="pool-ft">
-        <EngravedLabel size={9}>{totalDur > 0 ? `TOTAL ${fmtDur(totalDur)}` : ''}</EngravedLabel>
+        <EngravedLabel size={9}>{filtered.length} of {pool.length} files</EngravedLabel>
       </div>
     </aside>
     {menu && menu.kind === 'file' && (
@@ -430,23 +382,48 @@ function VideoPoolSidebar({ pool, onDragStart, search, setSearch, usedIds, onRen
   );
 }
 
-// ─────────── Pool Context Menu ───────────
+// Build a folder tree from a flat list of pool items. Each item's `path`
+// is the directory containing it; we walk the path segments to bucket
+// files under the appropriate folder node.
+function buildTreeFromList(items, sortBy) {
+  const root = { type: 'folder', name: 'USB-DRIVE', path: '/', children: {}, files: [] };
+  for (const v of items) {
+    const segs = (v.path || '/').split('/').filter(Boolean);
+    let node = root;
+    let cur = '';
+    for (const seg of segs) {
+      cur += '/' + seg;
+      if (!node.children[seg]) {
+        node.children[seg] = { type: 'folder', name: seg, path: cur, children: {}, files: [] };
+      }
+      node = node.children[seg];
+    }
+    node.files.push(v);
+  }
+  const finalize = (n) => {
+    n.childList = Object.values(n.children).sort((a, b) => a.name.localeCompare(b.name));
+    n.files.sort((a, b) => {
+      if (sortBy === 'size') return (b.sizeBytes || 0) - (a.sizeBytes || 0);
+      return a.name.localeCompare(b.name);
+    });
+    n.childList.forEach(finalize);
+    return n;
+  };
+  return finalize(root);
+}
+
 function PoolContextMenu({ x, y, video, used, onRename, onDelete, onClose }) {
   const ref = React.useRef(null);
   const [pos, setPos] = React.useState({ left: x, top: y });
   const [confirmDel, setConfirmDel] = React.useState(false);
 
-  // After mount, clamp to viewport
   React.useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
     const rect = el.getBoundingClientRect();
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-    let left = x;
-    let top = y;
-    if (left + rect.width + 4 > vw) left = vw - rect.width - 4;
-    if (top + rect.height + 4 > vh) top = vh - rect.height - 4;
+    let left = x, top = y;
+    if (left + rect.width + 4 > window.innerWidth) left = window.innerWidth - rect.width - 4;
+    if (top + rect.height + 4 > window.innerHeight) top = window.innerHeight - rect.height - 4;
     if (left < 4) left = 4;
     if (top < 4) top = 4;
     setPos({ left, top });
@@ -464,7 +441,7 @@ function PoolContextMenu({ x, y, video, used, onRename, onDelete, onClose }) {
         <span className="pool-ctx-title" title={video.name}>{video.name}</span>
       </div>
       <div className="pool-ctx-meta">
-        {video.kind.toUpperCase()} · {fmtDur(video.duration)}
+        {video.fileType === 'nes' ? 'NES ROM' : 'VIDEO'} · {fmtBytes(video.sizeBytes)}
       </div>
       <div className="pool-ctx-sep" />
       <button className="pool-ctx-item" onClick={onRename}>
@@ -498,14 +475,12 @@ function PoolContextMenu({ x, y, video, used, onRename, onDelete, onClose }) {
   );
 }
 
-// helper: count all files under a folder node, recursively
 function countFiles(node) {
   let n = node.files.length;
   for (const c of node.childList) n += countFiles(c);
   return n;
 }
 
-// helper: count files that are currently in a playlist
 function countUsedInFolder(node, usedIds) {
   if (!usedIds) return 0;
   let n = 0;
@@ -514,7 +489,6 @@ function countUsedInFolder(node, usedIds) {
   return n;
 }
 
-// ─────────── Folder Context Menu ───────────
 function FolderContextMenu({ x, y, node, fileCount, usedCount, onRename, onDelete, onExpandAll, onCollapseAll, onClose }) {
   const ref = React.useRef(null);
   const [pos, setPos] = React.useState({ left: x, top: y });
@@ -524,12 +498,9 @@ function FolderContextMenu({ x, y, node, fileCount, usedCount, onRename, onDelet
     const el = ref.current;
     if (!el) return;
     const rect = el.getBoundingClientRect();
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-    let left = x;
-    let top = y;
-    if (left + rect.width + 4 > vw) left = vw - rect.width - 4;
-    if (top + rect.height + 4 > vh) top = vh - rect.height - 4;
+    let left = x, top = y;
+    if (left + rect.width + 4 > window.innerWidth) left = window.innerWidth - rect.width - 4;
+    if (top + rect.height + 4 > window.innerHeight) top = window.innerHeight - rect.height - 4;
     if (left < 4) left = 4;
     if (top < 4) top = 4;
     setPos({ left, top });
@@ -600,11 +571,23 @@ function FolderContextMenu({ x, y, node, fileCount, usedCount, onRename, onDelet
   );
 }
 
-// ─────────── Settings Modal ───────────
-function SettingsModal({ open, onClose, settings, setSettings, storage }) {
+// ─────────── Settings Modal — looper INI editor ───────────
+function SettingsModal({ open, onClose, config, storage, onSave, onReboot, restarting }) {
+  const [draft, setDraft] = React.useState(() => deepClone(config));
+  React.useEffect(() => { setDraft(deepClone(config)); }, [config, open]);
+
   if (!open) return null;
-  const update = (k, v) => setSettings(s => ({ ...s, [k]: v }));
-  const usedPct = (storage.used / storage.total) * 100;
+
+  const get = (sec, key, fallback = '') => (draft[sec] && draft[sec][key] != null ? draft[sec][key] : fallback);
+  const set = (sec, key, value) => setDraft(d => {
+    const next = { ...d, [sec]: { ...(d[sec] || {}), [key]: value } };
+    return next;
+  });
+
+  const isBool = (v) => v === 'true' || v === true;
+  const toBool = (v) => (v ? 'true' : 'false');
+
+  const usedPct = storage && storage.total ? (storage.used / storage.total) * 100 : 0;
 
   return (
     <div className="modal-bg" onClick={onClose}>
@@ -621,99 +604,200 @@ function SettingsModal({ open, onClose, settings, setSettings, storage }) {
 
           <section className="cfg-sec">
             <div className="cfg-sec-hd">
-              <EngravedLabel size={11}>NETWORK / IP</EngravedLabel>
-              <LED on={settings.networkUp} color="green" label="LINK" />
+              <EngravedLabel size={11}>PLAYBACK</EngravedLabel>
             </div>
             <div className="cfg-grid">
               <label className="cfg-row">
-                <span>HOSTNAME</span>
-                <input className="cfg-in" value={settings.hostname} onChange={e=>update('hostname',e.target.value)} />
-              </label>
-              <label className="cfg-row">
-                <span>IP MODE</span>
+                <span>RANDOM ORDER</span>
                 <div className="seg">
-                  {['DHCP','STATIC'].map(m => (
-                    <button key={m} className={settings.ipMode===m?'on':''} onClick={()=>update('ipMode',m)}>{m}</button>
-                  ))}
+                  <button className={!isBool(get('process_manager','is_random'))?'on':''} onClick={()=>set('process_manager','is_random',toBool(false))}>SEQ</button>
+                  <button className={isBool(get('process_manager','is_random'))?'on':''} onClick={()=>set('process_manager','is_random',toBool(true))}>RANDOM</button>
                 </div>
               </label>
               <label className="cfg-row">
-                <span>IP ADDRESS</span>
-                <input className="cfg-in" value={settings.ip} onChange={e=>update('ip',e.target.value)} disabled={settings.ipMode==='DHCP'} />
-              </label>
-              <label className="cfg-row">
-                <span>SUBNET</span>
-                <input className="cfg-in" value={settings.subnet} onChange={e=>update('subnet',e.target.value)} disabled={settings.ipMode==='DHCP'} />
-              </label>
-              <label className="cfg-row">
-                <span>GATEWAY</span>
-                <input className="cfg-in" value={settings.gateway} onChange={e=>update('gateway',e.target.value)} disabled={settings.ipMode==='DHCP'} />
-              </label>
-              <label className="cfg-row">
-                <span>MAC ADDR</span>
-                <input className="cfg-in" value={settings.mac} disabled />
+                <span>WAIT BETWEEN VIDEOS (S)</span>
+                <input className="cfg-in" type="number" min="0" max="60"
+                  value={get('process_manager','wait_time','0')}
+                  onChange={e=>set('process_manager','wait_time',e.target.value)} />
               </label>
             </div>
           </section>
 
           <section className="cfg-sec">
             <div className="cfg-sec-hd">
-              <EngravedLabel size={11}>PLAYBACK BEHAVIOR</EngravedLabel>
+              <EngravedLabel size={11}>VIDEO (MPV)</EngravedLabel>
             </div>
             <div className="cfg-grid">
               <label className="cfg-row">
-                <span>END OF PLAYLIST</span>
+                <span>SOUND OUT</span>
                 <div className="seg">
-                  {['LOOP','STOP','SHUFFLE'].map(m => (
-                    <button key={m} className={settings.loopMode===m?'on':''} onClick={()=>update('loopMode',m)}>{m}</button>
+                  {['hdmi','local','alsa'].map(m => (
+                    <button key={m} className={get('mpv','sound')===m?'on':''} onClick={()=>set('mpv','sound',m)}>{m.toUpperCase()}</button>
                   ))}
                 </div>
               </label>
               <label className="cfg-row">
-                <span>CROSS-CHANNEL SYNC</span>
+                <span>STRETCH 4:3</span>
                 <div className="seg">
-                  {['REAL-TIME','INDEPENDENT'].map(m => (
-                    <button key={m} className={settings.syncMode===m?'on':''} onClick={()=>update('syncMode',m)}>{m}</button>
-                  ))}
+                  <button className={!isBool(get('mpv','video_stretch'))?'on':''} onClick={()=>set('mpv','video_stretch',toBool(false))}>OFF</button>
+                  <button className={isBool(get('mpv','video_stretch'))?'on':''} onClick={()=>set('mpv','video_stretch',toBool(true))}>ON</button>
                 </div>
               </label>
               <label className="cfg-row">
-                <span>STARTUP CHANNEL</span>
-                <input className="cfg-in" type="number" min="2" max="13" value={settings.startupChan} onChange={e=>update('startupChan',Number(e.target.value))} />
+                <span>HW DECODE</span>
+                <div className="seg">
+                  {['auto','v4l2m2m','drm','no'].map(m => (
+                    <button key={m} className={get('mpv','hwdec')===m?'on':''} onClick={()=>set('mpv','hwdec',m)}>{m.toUpperCase()}</button>
+                  ))}
+                </div>
               </label>
             </div>
           </section>
 
           <section className="cfg-sec">
             <div className="cfg-sec-hd">
-              <EngravedLabel size={11}>STORAGE</EngravedLabel>
+              <EngravedLabel size={11}>NES (RETROARCH)</EngravedLabel>
             </div>
-            <div className="storage-bar">
-              <div className="storage-fill" style={{ width: `${usedPct}%` }} />
-              <div className="storage-ticks">
-                {[...Array(20)].map((_,i)=> <span key={i} />)}
+            <div className="cfg-grid">
+              <label className="cfg-row">
+                <span>VERBOSE LOGS</span>
+                <div className="seg">
+                  <button className={!isBool(get('retroarch','verbose'))?'on':''} onClick={()=>set('retroarch','verbose',toBool(false))}>OFF</button>
+                  <button className={isBool(get('retroarch','verbose'))?'on':''} onClick={()=>set('retroarch','verbose',toBool(true))}>ON</button>
+                </div>
+              </label>
+              <label className="cfg-row">
+                <span>AUDIO</span>
+                <div className="seg">
+                  <button className={!isBool(get('retroarch','audio_enable'))?'on':''} onClick={()=>set('retroarch','audio_enable',toBool(false))}>OFF</button>
+                  <button className={isBool(get('retroarch','audio_enable'))?'on':''} onClick={()=>set('retroarch','audio_enable',toBool(true))}>ON</button>
+                </div>
+              </label>
+            </div>
+          </section>
+
+          <section className="cfg-sec">
+            <div className="cfg-sec-hd">
+              <EngravedLabel size={11}>LOGGING</EngravedLabel>
+            </div>
+            <div className="cfg-grid">
+              <label className="cfg-row">
+                <span>RELAY DEBUG</span>
+                <div className="seg">
+                  <button className={!isBool(get('logging','relay_debug'))?'on':''} onClick={()=>set('logging','relay_debug',toBool(false))}>OFF</button>
+                  <button className={isBool(get('logging','relay_debug'))?'on':''} onClick={()=>set('logging','relay_debug',toBool(true))}>ON</button>
+                </div>
+              </label>
+            </div>
+          </section>
+
+          {storage && (
+            <section className="cfg-sec">
+              <div className="cfg-sec-hd">
+                <EngravedLabel size={11}>STORAGE</EngravedLabel>
               </div>
+              <div className="storage-bar">
+                <div className="storage-fill" style={{ width: `${usedPct}%` }} />
+                <div className="storage-ticks">
+                  {[...Array(20)].map((_,i)=> <span key={i} />)}
+                </div>
+              </div>
+              <div className="storage-stats">
+                <div><EngravedLabel size={9}>USED</EngravedLabel><div className="storage-num">{fmtBytes(storage.used)}</div></div>
+                <div><EngravedLabel size={9}>FREE</EngravedLabel><div className="storage-num">{fmtBytes(storage.free)}</div></div>
+                <div><EngravedLabel size={9}>TOTAL</EngravedLabel><div className="storage-num">{fmtBytes(storage.total)}</div></div>
+                <div><EngravedLabel size={9}>FILES</EngravedLabel><div className="storage-num">{storage.files}</div></div>
+              </div>
+            </section>
+          )}
+
+          <section className="cfg-sec">
+            <div className="cfg-sec-hd">
+              <EngravedLabel size={11}>SYSTEM</EngravedLabel>
             </div>
-            <div className="storage-stats">
-              <div><EngravedLabel size={9}>USED</EngravedLabel><div className="storage-num">{storage.used.toFixed(1)} GB</div></div>
-              <div><EngravedLabel size={9}>FREE</EngravedLabel><div className="storage-num">{(storage.total-storage.used).toFixed(1)} GB</div></div>
-              <div><EngravedLabel size={9}>TOTAL</EngravedLabel><div className="storage-num">{storage.total.toFixed(0)} GB</div></div>
-              <div><EngravedLabel size={9}>FILES</EngravedLabel><div className="storage-num">{storage.files}</div></div>
+            <div className="cfg-grid">
+              <label className="cfg-row">
+                <span>REBOOT PI</span>
+                <HwButton label="⟳ REBOOT" color="red" onClick={() => {
+                  if (window.confirm('Reboot the Pi? The looper and the web UI will go down for ~30 seconds.')) {
+                    onReboot();
+                  }
+                }} disabled={restarting} />
+              </label>
             </div>
           </section>
 
         </div>
 
         <div className="modal-ft">
-          <HwButton label="CANCEL" color="beige" onClick={onClose} />
-          <HwButton label="APPLY" color="orange" onClick={onClose} />
+          <HwButton label="CANCEL" color="beige" onClick={onClose} disabled={restarting} />
+          <HwButton label={restarting ? 'RESTARTING...' : 'APPLY'} color="orange"
+            disabled={restarting}
+            onClick={() => onSave(draft)} />
         </div>
       </div>
     </div>
   );
 }
 
+function deepClone(o) { return JSON.parse(JSON.stringify(o || {})); }
+
+// ─────────── Log Drawer — collapsible bottom panel for ws log stream ───────────
+function LogDrawer({ logs, open, setOpen, wsState }) {
+  const scrollRef = React.useRef(null);
+  const [paused, setPaused] = React.useState(false);
+  const [hovering, setHovering] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!open || paused || hovering) return;
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [logs, open, paused, hovering]);
+
+  const recent = logs.slice(-200);
+
+  return (
+    <div className={`log-drawer${open ? ' open' : ''}`}>
+      <div className="log-drawer-tab" onClick={() => setOpen(o => !o)}>
+        <span className={`log-drawer-led${wsState === 'open' ? ' on' : ''}`} />
+        <EngravedLabel size={10}>{open ? 'HIDE LOG' : 'LOG'}</EngravedLabel>
+        <span className="log-drawer-count">{logs.length}</span>
+        {wsState !== 'open' && <span className="log-drawer-warn">DISCONNECTED</span>}
+      </div>
+      {open && (
+        <div className="log-drawer-body"
+             ref={scrollRef}
+             onMouseEnter={() => setHovering(true)}
+             onMouseLeave={() => setHovering(false)}>
+          {recent.length === 0 ? (
+            <div className="log-empty">— no log lines yet —</div>
+          ) : (
+            recent.map((e, i) => (
+              <div key={i} className={`log-line level-${(e.level||'info').toLowerCase()}`}>
+                <span className="log-ts">{fmtLogTs(e.ts)}</span>
+                <span className="log-level">{e.level}</span>
+                <span className="log-name">{e.name}</span>
+                <span className="log-msg">{e.msg}</span>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function fmtLogTs(ts) {
+  const d = new Date((ts || 0) * 1000);
+  const hh = String(d.getHours()).padStart(2,'0');
+  const mm = String(d.getMinutes()).padStart(2,'0');
+  const ss = String(d.getSeconds()).padStart(2,'0');
+  const ms = String(d.getMilliseconds()).padStart(3,'0');
+  return `${hh}:${mm}:${ss}.${ms}`;
+}
+
 Object.assign(window, {
-  fmtDur, fmtClock, HwButton, EngravedLabel, DymoTape, EditableDymo, LED,
-  VideoPoolSidebar, SettingsModal,
+  fmtDur, fmtClock, fmtBytes,
+  HwButton, EngravedLabel, LED,
+  VideoPoolSidebar, SettingsModal, LogDrawer,
 });

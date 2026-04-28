@@ -1538,3 +1538,309 @@ body {
 .era-overlay[data-era="tan"] {
   background: transparent;
 }
+
+/* ─────────── v2 additions: web UI integration ─────────── */
+
+.boot-msg {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 14px;
+  color: #ffb347;
+  background: #1a1410;
+  letter-spacing: 0.1em;
+}
+
+.hw-btn.disabled,
+.hw-btn[disabled] {
+  opacity: 0.4;
+  cursor: not-allowed;
+  filter: saturate(0.5);
+}
+.hw-btn.disabled:hover,
+.hw-btn[disabled]:hover {
+  transform: none;
+}
+
+/* Restart overlay shown while supervisor restarts the looper */
+.restart-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: rgba(20, 16, 12, 0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(2px);
+}
+.restart-box {
+  background: #1a1410;
+  border: 2px solid #3a2818;
+  padding: 30px 50px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  box-shadow: 0 0 40px rgba(255, 179, 71, 0.2);
+}
+.restart-spinner {
+  width: 48px;
+  height: 48px;
+  border: 3px solid rgba(255, 179, 71, 0.2);
+  border-top-color: var(--phosphor, #ffb347);
+  border-radius: 50%;
+  animation: restart-spin 0.8s linear infinite;
+}
+@keyframes restart-spin {
+  to { transform: rotate(360deg); }
+}
+.restart-msg {
+  font-family: 'VT323', monospace;
+  font-size: 28px;
+  color: var(--phosphor, #ffb347);
+  letter-spacing: 0.15em;
+  text-shadow: 0 0 10px var(--phosphor, #ffb347);
+}
+.restart-sub {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 11px;
+  color: #888;
+  letter-spacing: 0.1em;
+}
+
+/* Per-channel playhead — replaces the original single-global one */
+.tl-playhead-row {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  pointer-events: none;
+  z-index: 5;
+}
+.tl-playhead-row .tl-playhead-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: #ff3030;
+  box-shadow: 0 0 8px rgba(255, 60, 60, 0.7);
+  transform: translateX(-1px);
+}
+
+.tl-row-wrap.is-current .tl-row {
+  outline: 1px solid rgba(255, 179, 71, 0.5);
+  outline-offset: -1px;
+}
+.tl-chan.is-current {
+  background: rgba(255, 179, 71, 0.06);
+}
+.tl-chan.is-current .tl-chan-digit {
+  color: var(--phosphor, #ffb347);
+  text-shadow: 0 0 10px var(--phosphor, #ffb347);
+}
+
+/* Clip block — neutral palette (kind colors removed) */
+.clip {
+  position: relative;
+  height: 50px;
+  margin: 3px 0;
+  background: #1f1c1a;
+  border: 1px solid #3a3530;
+  display: flex;
+  align-items: stretch;
+  cursor: grab;
+  transition: outline 0.08s, box-shadow 0.08s, background 0.08s;
+}
+.clip:hover {
+  background: #292522;
+  outline: 1px solid rgba(255, 179, 71, 0.4);
+}
+.clip:active { cursor: grabbing; }
+.clip-body {
+  flex: 1;
+  padding: 4px 8px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+.clip-name {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 11px;
+  color: #d8c5a8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.clip-dur {
+  font-family: 'VT323', monospace;
+  font-size: 14px;
+  color: var(--phosphor, #ffb347);
+  text-shadow: 0 0 4px var(--phosphor, #ffb347);
+}
+.clip-rpt { color: #d97740; margin-left: 4px; }
+.clip-mini {
+  font-family: 'VT323', monospace;
+  font-size: 11px;
+  color: var(--phosphor, #ffb347);
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  margin: auto;
+}
+.clip-nes {
+  background: linear-gradient(135deg, #1c0f2e 0%, #14081f 100%);
+  border-color: #5a3a8a;
+}
+.clip-nes-body {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 16px;
+  overflow: hidden;
+}
+.clip-nes-badge {
+  background: #c060ff;
+  color: #1a0d2e;
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 16px;
+  padding: 2px 8px;
+  letter-spacing: 0.1em;
+}
+.clip-nes-name {
+  font-family: 'Share Tech Mono', monospace;
+  color: #e8c5ff;
+  font-size: 12px;
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.clip-nes-tag {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 10px;
+  color: #c060ff;
+  letter-spacing: 0.15em;
+}
+.tl-row.drop-invalid {
+  background: rgba(255, 60, 60, 0.15);
+}
+.tl-row.drop-invalid::after {
+  content: '✕ INVALID DROP';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-family: 'Share Tech Mono', monospace;
+  color: #ff3030;
+  font-size: 13px;
+  letter-spacing: 0.2em;
+  pointer-events: none;
+}
+
+/* ─────────── Log Drawer ─────────── */
+.log-drawer {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 80;
+  font-family: 'Share Tech Mono', monospace;
+  pointer-events: none;
+}
+.log-drawer-tab {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 14px;
+  background: #1a1410;
+  border: 1px solid #3a2818;
+  border-bottom: none;
+  margin-left: 16px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 11px;
+  color: #d8c5a8;
+  letter-spacing: 0.1em;
+}
+.log-drawer-tab:hover { background: #25201a; }
+.log-drawer-led {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #4a3018;
+  box-shadow: inset 0 0 2px rgba(0,0,0,0.5);
+}
+.log-drawer-led.on {
+  background: #5aff5a;
+  box-shadow: 0 0 6px rgba(90, 255, 90, 0.6);
+}
+.log-drawer-count {
+  background: #2a201a;
+  color: var(--phosphor, #ffb347);
+  padding: 1px 6px;
+  font-family: 'VT323', monospace;
+  font-size: 12px;
+}
+.log-drawer-warn {
+  color: #ff8050;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+}
+.log-drawer-body {
+  pointer-events: auto;
+  background: #0e0c0a;
+  border-top: 1px solid #3a2818;
+  height: 220px;
+  overflow-y: auto;
+  font-size: 11px;
+}
+.log-line {
+  display: grid;
+  grid-template-columns: 90px 70px 140px 1fr;
+  padding: 2px 12px;
+  gap: 8px;
+  border-bottom: 1px solid #1a1410;
+  white-space: nowrap;
+}
+.log-line:hover { background: #1a1410; }
+.log-ts { color: #6a5a48; font-family: 'VT323', monospace; font-size: 12px; }
+.log-level {
+  color: #888;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+}
+.log-line.level-warning .log-level { color: #ffb347; }
+.log-line.level-error .log-level { color: #ff5050; font-weight: bold; }
+.log-line.level-debug .log-level { color: #5a8aaa; }
+.log-name { color: #6a8a8a; }
+.log-msg {
+  color: #d8c5a8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.log-line.level-error .log-msg { color: #ffb0b0; }
+.log-line.level-warning .log-msg { color: #ffd8a0; }
+.log-empty {
+  padding: 24px;
+  color: #5a4838;
+  font-size: 11px;
+  text-align: center;
+  letter-spacing: 0.15em;
+}
+
+/* The position:relative on tl-row is needed so per-row playhead absolute
+   positioning works. (The original tl-row may already be relative; this
+   is belt-and-suspenders.) */
+.tl-row { position: relative; }
+
+/* Pool sidebar tweaks (remove kind-stripe leftover space) */
+.pool-kind { display: none; }
+
+/* Hide the original single-global playhead overlay (replaced by per-row) */
+.tl-playhead { display: none; }
+

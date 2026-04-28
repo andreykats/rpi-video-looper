@@ -52,6 +52,17 @@ VIDEO_EXTS = (
 )
 NES_EXTS = ('nes', 'fds', 'nsf')
 
+# Folders to hide from the pool tree — filesystem/OS cruft the user
+# doesn't curate.
+HIDDEN_FOLDERS = frozenset({
+    'System Volume Information',
+    '$RECYCLE.BIN',
+    'lost+found',
+    '.Trashes',
+    '.Spotlight-V100',
+    '.fseventsd',
+})
+
 
 # ---------- USB / path helpers ----------
 
@@ -147,6 +158,8 @@ def _scan_dir(path: str) -> dict:
         }
     for e in entries:
         if e.name.startswith('.'):
+            continue
+        if e.name in HIDDEN_FOLDERS:
             continue
         if e.is_dir(follow_symlinks=False):
             children.append(_scan_dir(e.path))
@@ -354,6 +367,15 @@ def _active_kind(pm) -> Optional[str]:
 def _build_state_snapshot(pm) -> dict:
     bm = pm._broadcast_manager
     channels = {}
+    # Re-resolve channel directories from the file reader so the UI can
+    # build absolute paths for drag-drop / move targets that match the
+    # mount the file actually lives on. Cheap (a handful of os.path.isdir).
+    channel_paths = {}
+    if hasattr(pm._reader, 'search_channel_paths'):
+        try:
+            channel_paths = pm._reader.search_channel_paths()
+        except Exception as e:
+            log.warning('search_channel_paths failed: %s', e)
     if bm is not None:
         for ch_num, pl in bm._channel_playlists.items():
             entries = [{
@@ -387,6 +409,7 @@ def _build_state_snapshot(pm) -> dict:
                 'totalDurationSec': loop_total,
                 'current': cur,
                 'entries': entries,
+                'channelDir': channel_paths.get(ch_num, ''),
             }
 
     cfg = {}
