@@ -1,5 +1,6 @@
 import logging
 import os
+import pwd
 import socket
 import subprocess
 import time
@@ -128,9 +129,15 @@ class RetroArchPlayer:
         # RetroArch's KMS/GL init uses XDG_RUNTIME_DIR for runtime sockets;
         # supervisor's environment doesn't include it, and relying on
         # os.environ propagation has proven unreliable here. Pass an
-        # explicit env that includes it.
+        # explicit env that includes it. Same applies to HOME — without it
+        # RetroArch can't locate $HOME/.config/retroarch/retroarch.cfg and
+        # falls back to compiled-in defaults, which picks PulseAudio (fails
+        # on DietPi) and gives up rather than walking the fallback list.
         env = os.environ.copy()
         env.setdefault('XDG_RUNTIME_DIR', '/run/user/{0}'.format(os.geteuid()))
+        home = os.environ.get('HOME') or pwd.getpwuid(os.geteuid()).pw_dir
+        env.setdefault('HOME', home)
+        env.setdefault('XDG_CONFIG_HOME', os.path.join(home, '.config'))
 
         try:
             self._process = subprocess.Popen(
