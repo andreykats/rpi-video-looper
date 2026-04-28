@@ -3,12 +3,17 @@
 import logging
 import os
 import select
+import struct
 import subprocess
 import time
 import socket
 import json
+import zlib
 
 SOCKET_PATH = '/tmp/mpv-video-looper.sock'
+BLANK_IMAGE_PATH = '/tmp/mpv-video-looper-blank.png'
+BLANK_RENDER_S = 0.1  # let mpv actually present the blank frame before
+                     # the next loadfile-replace cancels it
 
 log = logging.getLogger('looper.mpv')
 
@@ -24,6 +29,30 @@ def _blank_console():
         pass  # Not running on console or no permission
 
 
+def _ensure_blank_image(path=BLANK_IMAGE_PATH):
+    """Write a 1x1 black PNG used as a transition slate between loadfiles.
+
+    mpv's loadfile-replace holds the previous file's last rendered frame
+    on the DRM plane while the new file demuxes/seeks/decodes. By doing
+    a quick replace to this PNG first, we force the held frame to black.
+    """
+    if os.path.exists(path):
+        return
+    sig = b'\x89PNG\r\n\x1a\n'
+
+    def chunk(name, data):
+        crc = zlib.crc32(name + data) & 0xffffffff
+        return struct.pack('>I', len(data)) + name + data + struct.pack('>I', crc)
+
+    ihdr = struct.pack('>IIBBBBB', 1, 1, 8, 2, 0, 0, 0)  # 1x1, 8-bit RGB
+    idat = zlib.compress(b'\x00\x00\x00\x00')             # filter + (R,G,B)
+    try:
+        with open(path, 'wb') as f:
+            f.write(sig + chunk(b'IHDR', ihdr) + chunk(b'IDAT', idat) + chunk(b'IEND', b''))
+    except OSError as e:
+        log.warning('blank png write failed path=%s err=%s', path, e)
+
+
 class MPVPlayer:
 
     def __init__(self, config):
@@ -32,6 +61,7 @@ class MPVPlayer:
         self._ipc_sock = None
         self._play_requested_time = 0  # Prevent duplicate plays during startup
         self._load_config(config)
+        _ensure_blank_image()
 
     def _load_config(self, config):
         """Load configuration from INI file."""
@@ -165,6 +195,17 @@ class MPVPlayer:
         Returns True if successful, False if IPC failed.
         """
         try:
+            # Replace the previous file's stale frame with black before
+            # kicking off the (potentially slow) real load. mpv holds the
+            # previous file's last rendered frame on the DRM plane during
+            # loadfile-replace, so making "previously playing" = a black
+            # image keeps the screen blank until the new file's first
+            # frame is ready. The short sleep gives mpv time to actually
+            # render the blank slate before the next loadfile cancels it.
+            if os.path.exists(BLANK_IMAGE_PATH):
+                self._send_ipc_command_verified('loadfile', BLANK_IMAGE_PATH, 'replace')
+                time.sleep(BLANK_RENDER_S)
+
             # Use loadfile command to replace current video
             # MPV JSON IPC format: loadfile <url> [<flags> [<index> [<options>]]]
             # Options must be a dict, not a string
@@ -224,6 +265,10 @@ class MPVPlayer:
         args.extend(['--no-osc'])
         args.extend(['--no-input-default-bindings'])
         args.extend(['--keep-open=no'])
+        # Stay alive across loadfile gaps so the blank-slate transition
+        # doesn't accidentally end the playlist and exit mpv.
+        args.extend(['--idle=yes'])
+        args.extend(['--image-display-duration=inf'])
 
         # Force ALSA when the config selects an HDMI/local/alsa output. mpv's
         # default autodetection probes PipeWire and JACK first; on this Pi
