@@ -10,6 +10,7 @@ import configparser
 import json
 import logging
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -26,7 +27,7 @@ from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import HTMLResponse, JSONResponse
 from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.staticfiles import StaticFiles
 from starlette.websockets import WebSocket, WebSocketDisconnect
@@ -53,6 +54,29 @@ class NoCacheMiddleware(BaseHTTPMiddleware):
 
 RUNTIME_INI_PATH = '/boot/video_looper.ini'
 WEBUI_DIR = os.path.join(os.path.dirname(__file__), 'webui')
+
+# Process-startup asset version. Appended as ?v=<this> to local asset URLs
+# in index.html so each `supervisorctl restart` invalidates browser caches
+# that may have stored an older copy without no-cache headers.
+ASSET_VERSION = str(int(time.time()))
+_ASSET_REF_RE = re.compile(
+    r'((?:href|src)=")((?!https?://|//)[^"?]+\.(?:css|js|jsx))(")'
+)
+
+
+async def index_handler(request: Request):
+    path = os.path.join(WEBUI_DIR, 'index.html')
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            html = f.read()
+    except OSError as e:
+        log.warning('failed to read index.html: %s', e)
+        return HTMLResponse('index.html missing', status_code=500)
+
+    def repl(m):
+        return f'{m.group(1)}{m.group(2)}?v={ASSET_VERSION}{m.group(3)}'
+
+    return HTMLResponse(_ASSET_REF_RE.sub(repl, html))
 
 # Per the plan: only these INI keys are exposed to the UI. Anything else
 # (encoder, web, usb_drive) stays SSH-only.
@@ -1115,6 +1139,8 @@ async def shutdown_watcher(app: Starlette, pm):
 
 def create_app(pm) -> Starlette:
     routes = [
+        Route('/', index_handler, methods=['GET']),
+        Route('/index.html', index_handler, methods=['GET']),
         Route('/api/state', state_handler, methods=['GET']),
         Route('/api/pool', pool_handler, methods=['GET']),
         Route('/api/storage', storage_handler, methods=['GET']),
