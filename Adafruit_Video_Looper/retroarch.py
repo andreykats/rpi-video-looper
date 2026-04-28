@@ -169,10 +169,10 @@ class RetroArchPlayer:
             # Video scaling options for full screen stretch
             'video_scale_integer = "{}"'.format(scale_integer),
             'video_force_aspect = "{}"'.format(force_aspect),
-            # aspect_ratio_index: 20 = Full (stretch to current framebuffer);
+            # aspect_ratio_index: 24 = Full (stretch to current framebuffer);
             # avoids hardcoding a viewport that breaks when the framebuffer
             # mode changes (e.g. CRT/modulator 4:3 vs debug monitor 16:9).
-            'aspect_ratio_index = "20"',
+            'aspect_ratio_index = "24"',
             # Audio
             'audio_enable = "{}"'.format(audio_enable),
             # Save states
