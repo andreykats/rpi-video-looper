@@ -882,7 +882,7 @@ body {
   border-right: 2px solid #4a4e52;
 }
 .tl-chan-num {
-  width: 36px; height: 38px;
+  width: 32px; height: 32px;
   background: #050608;
   border: 1px solid #3a3e42;
   border-radius: 2px;
@@ -891,7 +891,7 @@ body {
 }
 .tl-chan-digit {
   font-family: 'VT323', monospace;
-  font-size: 38px;
+  font-size: 28px;
   color: var(--phosphor);
   line-height: 1;
 }
@@ -902,7 +902,7 @@ body {
 }
 .tl-chan-name {
   font-family: 'Share Tech Mono', monospace;
-  font-size: 9px;
+  font-size: 8px;
   color: #c8ccd0;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -927,7 +927,7 @@ body {
   border: 1px solid var(--phosphor);
   color: var(--phosphor);
   font-family: 'Share Tech Mono', monospace;
-  font-size: 9px;
+  font-size: 8px;
   letter-spacing: 0.1em;
   text-transform: uppercase;
   padding: 1px 4px;
@@ -944,7 +944,7 @@ body {
 }
 .tl-chan-stats {
   font-family: 'Share Tech Mono', monospace;
-  font-size: 9px;
+  font-size: 8px;
   color: rgba(255,179,71,0.6);
   letter-spacing: 0.05em;
 }
@@ -1037,8 +1037,8 @@ body {
 /* Timeline rows */
 .tl-row-wrap {
   border-bottom: 1px solid #3a3e42;
-  min-height: 56px;
-  flex: 1 1 56px;
+  min-height: 46px;
+  flex: 1 1 46px;
   display: flex;
   flex-direction: row;
   align-items: stretch;
@@ -1048,7 +1048,7 @@ body {
 }
 .tl-row {
   flex: 0 0 auto;
-  min-height: 56px;
+  min-height: 46px;
   position: relative;
   display: flex;
   flex-direction: row;
@@ -1090,7 +1090,7 @@ body {
 /* Clip block */
 .clip {
   position: relative;
-  height: 50px;
+  height: 40px;
   margin: 3px 0;
   background: var(--clip-bg);
   border: 1px solid var(--clip-stripe);
@@ -1686,7 +1686,7 @@ body {
 /* Clip block — neutral palette (kind colors removed) */
 .clip {
   position: relative;
-  height: 50px;
+  height: 40px;
   margin: 3px 0;
   background: #1f1c1a;
   border: 1px solid #3a3530;
@@ -1702,7 +1702,7 @@ body {
 .clip:active { cursor: grabbing; }
 .clip-body {
   flex: 1;
-  padding: 4px 8px;
+  padding: 3px 8px;
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -1710,7 +1710,7 @@ body {
 }
 .clip-name {
   font-family: 'Share Tech Mono', monospace;
-  font-size: 11px;
+  font-size: 10px;
   color: #d8c5a8;
   white-space: nowrap;
   overflow: hidden;
@@ -1718,7 +1718,7 @@ body {
 }
 .clip-dur {
   font-family: 'VT323', monospace;
-  font-size: 14px;
+  font-size: 12px;
   color: var(--phosphor, #ffb347);
   text-shadow: 0 0 4px var(--phosphor, #ffb347);
 }
