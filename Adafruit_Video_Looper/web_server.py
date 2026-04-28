@@ -23,6 +23,8 @@ from typing import Optional
 
 import uvicorn
 from starlette.applications import Starlette
+from starlette.middleware import Middleware
+from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Mount, Route, WebSocketRoute
@@ -33,6 +35,21 @@ from . import playlist_io
 from .model import Playlist
 
 log = logging.getLogger('looper.web')
+
+
+class NoCacheMiddleware(BaseHTTPMiddleware):
+    """Force browsers to always re-validate static assets so the in-browser
+    Babel pipeline picks up freshly-deployed JSX without a hard reload."""
+    NO_CACHE_SUFFIXES = ('.html', '.jsx', '.css', '.js')
+
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        path = request.url.path
+        if path.endswith(self.NO_CACHE_SUFFIXES) or path == '/':
+            response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+            response.headers['Pragma'] = 'no-cache'
+            response.headers['Expires'] = '0'
+        return response
 
 RUNTIME_INI_PATH = '/boot/video_looper.ini'
 WEBUI_DIR = os.path.join(os.path.dirname(__file__), 'webui')
@@ -1114,7 +1131,11 @@ def create_app(pm) -> Starlette:
                     pass
             logging.getLogger().removeHandler(handler)
 
-    return Starlette(routes=routes, lifespan=lifespan)
+    return Starlette(
+        routes=routes,
+        lifespan=lifespan,
+        middleware=[Middleware(NoCacheMiddleware)],
+    )
 
 
 def start_web_thread(pm) -> Optional[threading.Thread]:
