@@ -136,13 +136,13 @@ class ChannelSwitcher:
 
         elog.info('publish target=%d prev=%d', channel, self.previous_channel)
 
+        if self.on_channel_change is not None:
+            self.on_channel_change(channel, self.previous_channel)
+
         if band is None:
             log.info('channel %d unmapped: skipping relays', channel)
         else:
             self._relay_target_slot.publish((band, frequency))
-
-        if self.on_channel_change is not None:
-            self.on_channel_change(channel, self.previous_channel)
 
         self.previous_channel = channel
 
