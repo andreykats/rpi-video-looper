@@ -296,8 +296,8 @@ body {
   background: rgba(0,0,0,0.5);
 }
 .hw-led[data-on="1"] {
-  background: #ff4030;
-  box-shadow: 0 0 4px #ff4030;
+  background: #5aff5a;
+  box-shadow: 0 0 4px rgba(90, 255, 90, 0.6);
 }
 
 /* Engraved label utility */
