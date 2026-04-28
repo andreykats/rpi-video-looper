@@ -851,7 +851,7 @@ body {
 }
 .tl-header-bar {
   display: grid;
-  grid-template-columns: 144px 1fr;
+  grid-template-columns: 180px 1fr;
   background: linear-gradient(180deg, #3a3e42, #2a2e32);
   border-bottom: 2px solid #4a4e52;
   padding: 8px 12px;
@@ -1005,7 +1005,7 @@ body {
   position: sticky;
   left: 0;
   z-index: 5;
-  width: 144px;
+  width: 180px;
   flex-shrink: 0;
   background: #0a0c10;
   border-right: 2px solid #4a4e52;
