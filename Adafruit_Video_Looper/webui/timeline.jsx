@@ -11,7 +11,7 @@
 
 const PX_PER_MIN = 8;
 const TIMELINE_MIN = 360;          // 6-hour visual frame
-const HEADER_PX = 144;             // must match CSS .tl-chan-cell width
+const HEADER_PX = 180;             // must match CSS .tl-chan-cell width
 
 function ChannelTimeline({
   channels, playlists, increment, positionsByChannel, currentChannel,

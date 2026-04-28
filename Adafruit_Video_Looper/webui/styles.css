@@ -881,7 +881,7 @@ body {
   position: sticky;
   left: 0;
   z-index: 3;
-  width: 144px;
+  width: 180px;
   flex-shrink: 0;
   display: grid;
   grid-template-columns: 32px 1fr 8px;
@@ -912,7 +912,7 @@ body {
 }
 .tl-chan-name {
   font-family: 'Share Tech Mono', monospace;
-  font-size: var(--fs-xs);
+  font-size: var(--fs-md);
   color: #c8ccd0;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -937,7 +937,7 @@ body {
   border: 1px solid var(--phosphor);
   color: var(--phosphor);
   font-family: 'Share Tech Mono', monospace;
-  font-size: var(--fs-xs);
+  font-size: var(--fs-md);
   letter-spacing: 0.1em;
   text-transform: uppercase;
   padding: 1px 4px;
@@ -954,7 +954,7 @@ body {
 }
 .tl-chan-stats {
   font-family: 'Share Tech Mono', monospace;
-  font-size: var(--fs-xs);
+  font-size: var(--fs-md);
   color: rgba(255,179,71,0.6);
   letter-spacing: 0.05em;
 }
