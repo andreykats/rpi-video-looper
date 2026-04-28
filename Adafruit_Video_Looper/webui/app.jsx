@@ -502,7 +502,7 @@ function App() {
             <LED on={true} color="green" label="PWR" />
             <LED on={wsState === 'open'} color="green" label="NET" />
             <LED on={!!activePlayer && !playbackStopped} color="red" label="AIR" />
-            <LED on={false} color="amber" label="REC" />
+            <LED on={wsState === 'open'} color="green" label="WS" />
           </div>
           <div className="phosphor-display">
             <div className="phosphor-screen">
@@ -525,7 +525,6 @@ function App() {
               label="☰ LOGS"
               color="beige"
               onClick={() => setLogOpen(o => !o)}
-              indicator={wsState === 'open'}
             />
             <HwButton label="▶ SYNC" color="green" disabled />
             <HwButton label="● REC" color="red" disabled />
