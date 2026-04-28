@@ -1697,7 +1697,7 @@ body {
 .clip {
   position: relative;
   align-self: stretch;
-  margin: 0;
+  margin: 1px 0;
   background: #1f1c1a;
   border: 1px solid #3a3530;
   display: flex;
