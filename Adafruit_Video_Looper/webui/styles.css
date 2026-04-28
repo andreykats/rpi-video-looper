@@ -1770,3 +1770,7 @@ body {
 /* Hide the original single-global playhead overlay (replaced by per-row) */
 .tl-playhead { display: none; }
 
+/* Kiosk-style: hide scrollbars everywhere; scrolling still works via wheel/drag/keys */
+* { scrollbar-width: none; }
+*::-webkit-scrollbar { width: 0; height: 0; display: none; }
+
