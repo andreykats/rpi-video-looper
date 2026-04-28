@@ -401,12 +401,21 @@ function buildTreeFromList(items, sortBy) {
     node.files.push(v);
   }
   const finalize = (n) => {
-    n.childList = Object.values(n.children).sort((a, b) => a.name.localeCompare(b.name));
-    n.files.sort((a, b) => {
-      if (sortBy === 'size') return (b.sizeBytes || 0) - (a.sizeBytes || 0);
-      return a.name.localeCompare(b.name);
-    });
+    n.childList = Object.values(n.children);
     n.childList.forEach(finalize);
+
+    const filesBytes = n.files.reduce((s, f) => s + (f.sizeBytes || 0), 0);
+    const childBytes = n.childList.reduce((s, c) => s + (c.totalBytes || 0), 0);
+    n.totalBytes = filesBytes + childBytes;
+
+    if (sortBy === 'size') {
+      n.childList.sort((a, b) => (b.totalBytes || 0) - (a.totalBytes || 0));
+      n.files.sort((a, b) => (b.sizeBytes || 0) - (a.sizeBytes || 0));
+    } else {
+      const cmp = (a, b) => a.name.localeCompare(b.name, undefined, { numeric: true });
+      n.childList.sort(cmp);
+      n.files.sort(cmp);
+    }
     return n;
   };
   return finalize(root);
