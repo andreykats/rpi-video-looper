@@ -12,8 +12,11 @@ import zlib
 
 SOCKET_PATH = '/tmp/mpv-video-looper.sock'
 BLANK_IMAGE_PATH = '/tmp/mpv-video-looper-blank.png'
-BLANK_RENDER_S = 0.1  # let mpv actually present the blank frame before
-                     # the next loadfile-replace cancels it
+BLANK_RENDER_S = 0.3  # let mpv actually present the blank frame before
+                      # the next loadfile-replace cancels it. Sized for
+                      # the worst case: switching away from a large file
+                      # whose demuxer/decoder state takes ~200 ms to tear
+                      # down before the blank PNG can paint.
 
 log = logging.getLogger('looper.mpv')
 
