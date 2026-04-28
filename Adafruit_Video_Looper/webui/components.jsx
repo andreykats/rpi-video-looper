@@ -56,9 +56,9 @@ function HwButton({ label, color = 'beige', lit = false, onClick, disabled = fal
 }
 
 // Engraved label — used on chassis sections
-function EngravedLabel({ children, size = 10 }) {
+function EngravedLabel({ children, size = 'xs' }) {
   return (
-    <span className="engraved" style={{ fontSize: size }}>{children}</span>
+    <span className={`engraved engraved-${size}`}>{children}</span>
   );
 }
 
@@ -270,7 +270,7 @@ function VideoPoolSidebar({ pool, onDragStart, search, setSearch, usedIds, onRen
     <>
     <aside className="pool">
       <div className="pool-hd">
-        <EngravedLabel size={11}>USB SOURCE</EngravedLabel>
+        <EngravedLabel size="sm">USB SOURCE</EngravedLabel>
         <span className="pool-count">{filtered.length} FILES</span>
       </div>
       <div className="pool-mount">
@@ -350,7 +350,7 @@ function VideoPoolSidebar({ pool, onDragStart, search, setSearch, usedIds, onRen
         })}
       </div>
       <div className="pool-ft">
-        <EngravedLabel size={9}>{filtered.length} of {pool.length} files</EngravedLabel>
+        <EngravedLabel size="xs">{filtered.length} of {pool.length} files</EngravedLabel>
       </div>
     </aside>
     {menu && menu.kind === 'file' && (
@@ -613,7 +613,7 @@ function SettingsModal({ open, onClose, config, storage, onSave, onReboot, resta
 
           <section className="cfg-sec">
             <div className="cfg-sec-hd">
-              <EngravedLabel size={11}>PLAYBACK</EngravedLabel>
+              <EngravedLabel size="sm">PLAYBACK</EngravedLabel>
             </div>
             <div className="cfg-grid">
               <label className="cfg-row">
@@ -634,7 +634,7 @@ function SettingsModal({ open, onClose, config, storage, onSave, onReboot, resta
 
           <section className="cfg-sec">
             <div className="cfg-sec-hd">
-              <EngravedLabel size={11}>VIDEO (MPV)</EngravedLabel>
+              <EngravedLabel size="sm">VIDEO (MPV)</EngravedLabel>
             </div>
             <div className="cfg-grid">
               <label className="cfg-row">
@@ -665,7 +665,7 @@ function SettingsModal({ open, onClose, config, storage, onSave, onReboot, resta
 
           <section className="cfg-sec">
             <div className="cfg-sec-hd">
-              <EngravedLabel size={11}>NES (RETROARCH)</EngravedLabel>
+              <EngravedLabel size="sm">NES (RETROARCH)</EngravedLabel>
             </div>
             <div className="cfg-grid">
               <label className="cfg-row">
@@ -687,7 +687,7 @@ function SettingsModal({ open, onClose, config, storage, onSave, onReboot, resta
 
           <section className="cfg-sec">
             <div className="cfg-sec-hd">
-              <EngravedLabel size={11}>LOGGING</EngravedLabel>
+              <EngravedLabel size="sm">LOGGING</EngravedLabel>
             </div>
             <div className="cfg-grid">
               <label className="cfg-row">
@@ -703,7 +703,7 @@ function SettingsModal({ open, onClose, config, storage, onSave, onReboot, resta
           {storage && (
             <section className="cfg-sec">
               <div className="cfg-sec-hd">
-                <EngravedLabel size={11}>STORAGE</EngravedLabel>
+                <EngravedLabel size="sm">STORAGE</EngravedLabel>
               </div>
               <div className="storage-bar">
                 <div className="storage-fill" style={{ width: `${usedPct}%` }} />
@@ -712,17 +712,17 @@ function SettingsModal({ open, onClose, config, storage, onSave, onReboot, resta
                 </div>
               </div>
               <div className="storage-stats">
-                <div><EngravedLabel size={9}>USED</EngravedLabel><div className="storage-num">{fmtBytes(storage.used)}</div></div>
-                <div><EngravedLabel size={9}>FREE</EngravedLabel><div className="storage-num">{fmtBytes(storage.free)}</div></div>
-                <div><EngravedLabel size={9}>TOTAL</EngravedLabel><div className="storage-num">{fmtBytes(storage.total)}</div></div>
-                <div><EngravedLabel size={9}>FILES</EngravedLabel><div className="storage-num">{storage.files}</div></div>
+                <div><EngravedLabel size="xs">USED</EngravedLabel><div className="storage-num">{fmtBytes(storage.used)}</div></div>
+                <div><EngravedLabel size="xs">FREE</EngravedLabel><div className="storage-num">{fmtBytes(storage.free)}</div></div>
+                <div><EngravedLabel size="xs">TOTAL</EngravedLabel><div className="storage-num">{fmtBytes(storage.total)}</div></div>
+                <div><EngravedLabel size="xs">FILES</EngravedLabel><div className="storage-num">{storage.files}</div></div>
               </div>
             </section>
           )}
 
           <section className="cfg-sec">
             <div className="cfg-sec-hd">
-              <EngravedLabel size={11}>SYSTEM</EngravedLabel>
+              <EngravedLabel size="sm">SYSTEM</EngravedLabel>
             </div>
             <div className="cfg-grid">
               <label className="cfg-row">
@@ -769,7 +769,7 @@ function LogDrawer({ logs, open, setOpen, wsState }) {
     <div className={`log-drawer${open ? ' open' : ''}`}>
       <div className="log-drawer-tab" onClick={() => setOpen(o => !o)}>
         <span className={`log-drawer-led${wsState === 'open' ? ' on' : ''}`} />
-        <EngravedLabel size={10}>{open ? 'HIDE LOG' : 'LOG'}</EngravedLabel>
+        <EngravedLabel size="xs">{open ? 'HIDE LOG' : 'LOG'}</EngravedLabel>
         <span className="log-drawer-count">{logs.length}</span>
         {wsState !== 'open' && <span className="log-drawer-warn">DISCONNECTED</span>}
       </div>

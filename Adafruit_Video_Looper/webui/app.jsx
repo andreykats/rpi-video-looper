@@ -556,10 +556,10 @@ function App() {
         <section className="timeline-area">
           <div className="tl-header-bar">
             <div className="tl-corner">
-              <EngravedLabel size={11}>CHANNEL</EngravedLabel>
+              <EngravedLabel size="sm">CHANNEL</EngravedLabel>
             </div>
             <div className="tl-corner-r">
-              <EngravedLabel size={11}>BROADCAST TIMECODE — 6 HR FRAME</EngravedLabel>
+              <EngravedLabel size="sm">BROADCAST TIMECODE — 6 HR FRAME</EngravedLabel>
             </div>
           </div>
 
@@ -582,7 +582,7 @@ function App() {
               {[...Array(40)].map((_,i) => <span key={i} />)}
             </div>
             <div className="vent-info">
-              <EngravedLabel size={9}>DBL-CLICK CLIP TO REMOVE · DRAG TO MOVE BETWEEN CHANNELS · DRAG FROM LIBRARY TO ADD</EngravedLabel>
+              <EngravedLabel size="xs">DBL-CLICK CLIP TO REMOVE · DRAG TO MOVE BETWEEN CHANNELS · DRAG FROM LIBRARY TO ADD</EngravedLabel>
               <span className="vent-serial">CHANNEL CHANGES VIA ROTARY ENCODER ONLY</span>
             </div>
           </div>
