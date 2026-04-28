@@ -860,44 +860,26 @@ body {
 
 .tl-body {
   flex: 1;
-  display: grid;
-  grid-template-columns: 200px 1fr;
-  min-height: 0;
-}
-
-/* Channel labels column */
-.tl-channels {
   display: flex;
   flex-direction: column;
-  background: #14161a;
-  border-right: 2px solid #4a4e52;
-  overflow-y: auto;
-  scrollbar-width: none;
-  min-height: 100%;
+  min-height: 0;
+  overflow: hidden;
 }
-.tl-channels::-webkit-scrollbar { display: none; }
 
-/* Account for ruler height (channels start 30px down to align with ruler) */
-.tl-channels::before {
-  content: '';
+/* Sticky channel-name cell (lives inside each .tl-row-wrap) */
+.tl-chan-cell {
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  width: 200px;
   flex-shrink: 0;
-  height: 30px;
-  border-bottom: 1px solid #3a3e42;
-  background: #0a0c10;
-}
-.tl-chan {
   display: grid;
   grid-template-columns: 36px 1fr 16px;
   align-items: center;
   gap: 6px;
   padding: 5px 8px;
-  min-height: 56px;
-  flex: 1 1 56px;
-  border-bottom: 1px solid #3a3e42;
   background: #14161a;
-}
-.tl-chan:nth-child(even) {
-  background: #1a1c20;
+  border-right: 2px solid #4a4e52;
 }
 .tl-chan-num {
   width: 36px; height: 38px;
@@ -977,6 +959,8 @@ body {
   position: relative;
   overflow: hidden;
   min-width: 0;
+  flex: 1;
+  min-height: 0;
 }
 .tl-scroll {
   height: 100%;
@@ -1003,9 +987,26 @@ body {
   top: 0;
   height: 30px;
   flex-shrink: 0;
+  display: flex;
+  flex-direction: row;
+  z-index: 4;
+}
+.tl-ruler-corner {
+  position: sticky;
+  left: 0;
+  z-index: 5;
+  width: 200px;
+  flex-shrink: 0;
+  background: #0a0c10;
+  border-right: 2px solid #4a4e52;
+  border-bottom: 1px solid #3a3e42;
+}
+.tl-ruler-ticks {
+  position: relative;
+  height: 30px;
+  flex-shrink: 0;
   background: #0a0c10;
   border-bottom: 1px solid #3a3e42;
-  z-index: 4;
 }
 .tl-tick {
   position: absolute;
@@ -1039,10 +1040,14 @@ body {
   min-height: 56px;
   flex: 1 1 56px;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
+  align-items: stretch;
+}
+.tl-row-wrap:nth-child(even) .tl-chan-cell {
+  background: #1a1c20;
 }
 .tl-row {
-  flex: 1;
+  flex: 0 0 auto;
   min-height: 56px;
   position: relative;
   display: flex;
@@ -1670,10 +1675,10 @@ body {
   outline: 1px solid rgba(255, 179, 71, 0.5);
   outline-offset: -1px;
 }
-.tl-chan.is-current {
+.tl-chan-cell.is-current {
   background: rgba(255, 179, 71, 0.06);
 }
-.tl-chan.is-current .tl-chan-digit {
+.tl-chan-cell.is-current .tl-chan-digit {
   color: var(--phosphor, #ffb347);
   text-shadow: 0 0 10px var(--phosphor, #ffb347);
 }

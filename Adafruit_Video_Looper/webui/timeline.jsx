@@ -11,10 +11,11 @@
 
 const PX_PER_MIN = 8;
 const TIMELINE_MIN = 360;          // 6-hour visual frame
+const HEADER_PX = 200;             // must match CSS .tl-chan-cell width
 
 function ChannelTimeline({
   channels, playlists, increment, positionsByChannel, currentChannel,
-  mountRoot, onSavePlaylist, onMovePoolFileToChannel,
+  mountRoot, onSavePlaylist, onMovePoolFileToChannel, renderChannelHeader,
 }) {
   const dragRef = React.useRef(null);
   const [clipMenu, setClipMenu] = React.useState(null);
@@ -107,16 +108,19 @@ function ChannelTimeline({
   return (
     <div className="tl-wrap">
       <div className="tl-scroll">
-        <div className="tl-inner" style={{ width: totalPx + 80 }}>
+        <div className="tl-inner" style={{ width: HEADER_PX + totalPx + 80 }}>
           <div className="tl-ruler">
-            {ticks.map(m => {
-              const isHour = m % 60 === 0;
-              return (
-                <div key={m} className={isHour ? 'tl-tick hour' : 'tl-tick'} style={{ left: m * PX_PER_MIN }}>
-                  <span className="tl-tick-label">{fmtClock(m)}</span>
-                </div>
-              );
-            })}
+            <div className="tl-ruler-corner" />
+            <div className="tl-ruler-ticks" style={{ width: totalPx }}>
+              {ticks.map(m => {
+                const isHour = m % 60 === 0;
+                return (
+                  <div key={m} className={isHour ? 'tl-tick hour' : 'tl-tick'} style={{ left: m * PX_PER_MIN }}>
+                    <span className="tl-tick-label">{fmtClock(m)}</span>
+                  </div>
+                );
+              })}
+            </div>
           </div>
 
           {channels.map(ch => {
@@ -141,6 +145,7 @@ function ChannelTimeline({
             const palette = (window.CHANNEL_COLORS || {})[ch.num];
             return (
               <div key={ch.num} className={`tl-row-wrap${isCurrent ? ' is-current' : ''}`}>
+                {renderChannelHeader && renderChannelHeader(ch.num)}
                 <div
                   className={`tl-row${isNesRow ? ' nes-row' : ''}${dragInvalid ? ' drop-invalid' : ''}`}
                   style={{ width: totalPx }}

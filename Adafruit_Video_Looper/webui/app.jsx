@@ -432,6 +432,56 @@ function App() {
     return () => window.removeEventListener('contextmenu', handler);
   }, []);
 
+  const renderChannelHeader = (chNum) => {
+    const items = playlists[chNum] || [];
+    const totalDur = items.reduce(
+      (a, e) => a + ((e.durationSec || 0) * (e.repeat || 1)), 0
+    );
+    const isCurrent = chNum === currentChannel;
+    const name = channelNames[chNum];
+    const placeholder = `CHANNEL ${String(chNum).padStart(2,'0')}`;
+    const isEditing = editingChannel === chNum;
+    return (
+      <div className={`tl-chan-cell${isCurrent ? ' is-current' : ''}`}>
+        <div className="tl-chan-num">
+          <span className="tl-chan-digit">{String(chNum).padStart(2,'0')}</span>
+        </div>
+        <div className="tl-chan-info">
+          {isEditing ? (
+            <input
+              autoFocus
+              className="tl-chan-name-input"
+              value={editingChannelValue}
+              maxLength={64}
+              placeholder={placeholder}
+              onChange={(e) => setEditingChannelValue(e.target.value)}
+              onFocus={(e) => e.target.select()}
+              onBlur={commitRenameChannel}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') commitRenameChannel();
+                else if (e.key === 'Escape') cancelRenameChannel();
+              }}
+            />
+          ) : (
+            <div
+              className={`tl-chan-name${name ? '' : ' is-placeholder'}`}
+              title="Click to rename"
+              onClick={() => startRenameChannel(chNum)}>
+              {name || placeholder}
+            </div>
+          )}
+          <div className="tl-chan-stats">
+            {items.length} · {fmtDur(totalDur)}
+          </div>
+        </div>
+        <div className="tl-chan-leds">
+          <LED on={items.length > 0} color="green" />
+          <LED on={isCurrent} color="red" />
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="chassis" style={{ '--phosphor': phosphor }}>
       <style>{`:root{--phosphor:${phosphor}}`}</style>
@@ -514,58 +564,6 @@ function App() {
           </div>
 
           <div className="tl-body">
-            <div className="tl-channels">
-              {CHANNELS.map(ch => {
-                const items = playlists[ch.num] || [];
-                const totalDur = items.reduce(
-                  (a, e) => a + ((e.durationSec || 0) * (e.repeat || 1)), 0
-                );
-                const isCurrent = ch.num === currentChannel;
-                const name = channelNames[ch.num];
-                const placeholder = `CHANNEL ${String(ch.num).padStart(2,'0')}`;
-                const isEditing = editingChannel === ch.num;
-                return (
-                  <div key={ch.num} className={`tl-chan${isCurrent ? ' is-current' : ''}`}>
-                    <div className="tl-chan-num">
-                      <span className="tl-chan-digit">{String(ch.num).padStart(2,'0')}</span>
-                    </div>
-                    <div className="tl-chan-info">
-                      {isEditing ? (
-                        <input
-                          autoFocus
-                          className="tl-chan-name-input"
-                          value={editingChannelValue}
-                          maxLength={64}
-                          placeholder={placeholder}
-                          onChange={(e) => setEditingChannelValue(e.target.value)}
-                          onFocus={(e) => e.target.select()}
-                          onBlur={commitRenameChannel}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') commitRenameChannel();
-                            else if (e.key === 'Escape') cancelRenameChannel();
-                          }}
-                        />
-                      ) : (
-                        <div
-                          className={`tl-chan-name${name ? '' : ' is-placeholder'}`}
-                          title="Click to rename"
-                          onClick={() => startRenameChannel(ch.num)}>
-                          {name || placeholder}
-                        </div>
-                      )}
-                      <div className="tl-chan-stats">
-                        {items.length} · {fmtDur(totalDur)}
-                      </div>
-                    </div>
-                    <div className="tl-chan-leds">
-                      <LED on={items.length > 0} color="green" />
-                      <LED on={isCurrent} color="red" />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-
             <ChannelTimeline
               channels={CHANNELS}
               playlists={playlists}
@@ -575,6 +573,7 @@ function App() {
               mountRoot={mountRoot}
               onSavePlaylist={handleSavePlaylist}
               onMovePoolFileToChannel={handleAddPoolItem}
+              renderChannelHeader={renderChannelHeader}
             />
           </div>
 
