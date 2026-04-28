@@ -72,7 +72,7 @@ body {
     inset 0 -2px 0 rgba(0,0,0,0.15),
     0 2px 0 rgba(0,0,0,0.2);
   position: relative;
-  z-index: 5;
+  z-index: 100;
 }
 
 .chassis-top-l {
@@ -1792,53 +1792,52 @@ body {
   pointer-events: none;
 }
 
-/* ─────────── Log Drawer ─────────── */
+/* ─────────── Log Drawer (fullscreen retro terminal) ─────────── */
 .log-drawer {
   position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  inset: 0;
   z-index: 80;
   font-family: 'Share Tech Mono', monospace;
   pointer-events: none;
 }
 .log-drawer-body {
   pointer-events: auto;
-  background: #0e0c0a;
-  border-top: 1px solid #3a2818;
-  height: 220px;
+  background: #000;
+  height: 100%;
   overflow-y: auto;
-  font-size: var(--fs-sm);
+  font-size: var(--fs-md);
+  padding: 12px 0;
 }
 .log-line {
   display: grid;
-  grid-template-columns: 90px 70px 140px 1fr;
-  padding: 2px 12px;
-  gap: 8px;
-  border-bottom: 1px solid #1a1410;
+  grid-template-columns: 90px 70px 180px 1fr;
+  padding: 2px 16px;
+  gap: 10px;
   white-space: nowrap;
+  color: #5aff5a;
+  text-shadow: 0 0 2px rgba(90, 255, 90, 0.45);
 }
-.log-line:hover { background: #1a1410; }
-.log-ts { color: #6a5a48; font-family: 'VT323', monospace; font-size: var(--fs-sm); }
+.log-line:hover { background: #061a06; }
+.log-ts { color: #2f9a3a; font-family: 'VT323', monospace; }
 .log-level {
-  color: #888;
-  font-size: var(--fs-xs);
+  color: #3aaa3a;
+  font-size: var(--fs-sm);
   letter-spacing: 0.1em;
 }
-.log-line.level-warning .log-level { color: #ffb347; }
-.log-line.level-error .log-level { color: #ff5050; font-weight: bold; }
-.log-line.level-debug .log-level { color: #5a8aaa; }
-.log-name { color: #6a8a8a; }
+.log-line.level-warning .log-level { color: #ffd060; }
+.log-line.level-error   .log-level { color: #ff7060; font-weight: bold; }
+.log-line.level-debug   .log-level { color: #2f9a3a; }
+.log-name { color: #3aaa3a; }
 .log-msg {
-  color: #d8c5a8;
+  color: #5aff5a;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.log-line.level-error .log-msg { color: #ffb0b0; }
-.log-line.level-warning .log-msg { color: #ffd8a0; }
+.log-line.level-error   .log-msg { color: #ffb0a0; text-shadow: 0 0 2px rgba(255, 120, 100, 0.4); }
+.log-line.level-warning .log-msg { color: #ffe0a0; text-shadow: 0 0 2px rgba(255, 200, 100, 0.4); }
 .log-empty {
   padding: 24px;
-  color: #5a4838;
+  color: #2f9a3a;
   font-size: var(--fs-sm);
   text-align: center;
   letter-spacing: 0.15em;
