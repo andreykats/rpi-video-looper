@@ -5,15 +5,20 @@ play order and per-instance repeat counts. When present, it is the source
 of truth for that channel; when absent, the channel falls back to the
 existing alphabetical scan of `_get_movies_from_path`.
 
-Schema (version 1):
+Schema (version 2):
 
     {
-      "version": 1,
+      "version": 2,
+      "name": "EVENING NEWS",
       "entries": [
         {"filename": "EVENING_NEWS_0600.mp4", "repeat": 1},
         {"filename": "AD_DETERGENT_30S.mp4",  "repeat": 2}
       ]
     }
+
+The optional top-level `name` is a user-facing channel label shown in the
+web UI. Version 1 files (no `name`) are still accepted on read; writes
+always emit version 2.
 
 Same filename can appear multiple times. Missing files (filename not
 present in folder) are skipped with a logged warning, never raised.
@@ -29,16 +34,41 @@ from .model import Movie
 log = logging.getLogger('looper.playlist')
 
 PLAYLIST_FILENAME = 'playlist.json'
-PLAYLIST_VERSION = 1
+PLAYLIST_VERSION = 2
+SUPPORTED_PLAYLIST_VERSIONS = (1, 2)
+MAX_NAME_LEN = 64
 
 
-def read_playlist_json(channel_dir: str) -> Optional[list]:
+def clean_name(raw) -> Optional[str]:
+    """Validate a channel-name value from JSON or HTTP input.
+
+    Returns a stripped string when valid and non-empty, or None when the
+    value is missing/empty/blank. Raises ValueError on type mismatch,
+    excess length, or control characters.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, str):
+        raise ValueError('name must be a string, got {0!r}'.format(type(raw)))
+    cleaned = raw.strip()
+    if not cleaned:
+        return None
+    if len(cleaned) > MAX_NAME_LEN:
+        raise ValueError('name exceeds {0} chars'.format(MAX_NAME_LEN))
+    for ch in cleaned:
+        if ord(ch) < 0x20 or ord(ch) == 0x7f:
+            raise ValueError('name contains control character')
+    return cleaned
+
+
+def read_playlist_meta(channel_dir: str) -> Optional[dict]:
     """Read playlist.json from a channel directory.
 
-    Returns a cleaned list of `{"filename": str, "repeat": int}` dicts on
-    success, or None if the file is absent or unparseable. Malformed
+    Returns `{'name': str|None, 'entries': [{'filename': str, 'repeat': int}, ...]}`
+    on success, or None if the file is absent or unparseable. Malformed
     individual entries are dropped with a warning; the file as a whole is
-    only rejected when the top-level shape or version is wrong.
+    only rejected when the top-level shape or version is wrong. Accepts
+    both version 1 (no `name`) and version 2 schemas.
     """
     path = os.path.join(channel_dir, PLAYLIST_FILENAME)
     if not os.path.isfile(path):
@@ -53,13 +83,19 @@ def read_playlist_json(channel_dir: str) -> Optional[list]:
     if not isinstance(data, dict):
         log.warning('%s is not a JSON object', path)
         return None
-    if data.get('version') != PLAYLIST_VERSION:
+    if data.get('version') not in SUPPORTED_PLAYLIST_VERSIONS:
         log.warning('%s unknown version %r', path, data.get('version'))
         return None
     raw_entries = data.get('entries')
     if not isinstance(raw_entries, list):
         log.warning('%s missing entries list', path)
         return None
+
+    try:
+        name = clean_name(data.get('name'))
+    except ValueError as e:
+        log.warning('%s: ignoring invalid name (%s)', path, e)
+        name = None
 
     cleaned = []
     for raw in raw_entries:
@@ -78,20 +114,36 @@ def read_playlist_json(channel_dir: str) -> Optional[list]:
         except (TypeError, ValueError):
             repeat = 1
         cleaned.append({'filename': filename, 'repeat': repeat})
-    return cleaned
+    return {'name': name, 'entries': cleaned}
 
 
-def write_playlist_json(channel_dir: str, entries: Iterable) -> None:
+def read_playlist_json(channel_dir: str) -> Optional[list]:
+    """Read playlist.json entries (channel name discarded).
+
+    Thin wrapper around `read_playlist_meta` for callers that only need
+    the playback order. Returns the entries list, or None when the file
+    is absent or unparseable.
+    """
+    meta = read_playlist_meta(channel_dir)
+    return None if meta is None else meta['entries']
+
+
+def write_playlist_json(channel_dir: str, entries: Iterable, *,
+                        name: Optional[str] = None) -> None:
     """Atomically write playlist.json to a channel directory.
 
     Validates each entry. Filename must be a basename (no path separators).
-    Repeat is coerced to a positive int (defaults to 1).
+    Repeat is coerced to a positive int (defaults to 1). The optional
+    `name` is the user-facing channel label; pass None (or a blank string)
+    to omit it from the file.
 
     Raises FileNotFoundError if channel_dir doesn't exist; ValueError on
-    a malformed entry; OSError on filesystem failures.
+    a malformed entry or invalid name; OSError on filesystem failures.
     """
     if not os.path.isdir(channel_dir):
         raise FileNotFoundError(channel_dir)
+
+    cleaned_name = clean_name(name)
 
     cleaned = []
     for raw in entries:
@@ -109,7 +161,10 @@ def write_playlist_json(channel_dir: str, entries: Iterable) -> None:
             raise ValueError('repeat must be a positive int, got {0!r}'.format(repeat_raw))
         cleaned.append({'filename': filename, 'repeat': repeat})
 
-    payload = {'version': PLAYLIST_VERSION, 'entries': cleaned}
+    payload = {'version': PLAYLIST_VERSION}
+    if cleaned_name is not None:
+        payload['name'] = cleaned_name
+    payload['entries'] = cleaned
 
     final_path = os.path.join(channel_dir, PLAYLIST_FILENAME)
     fd, tmp_path = tempfile.mkstemp(prefix='.playlist-', suffix='.tmp',

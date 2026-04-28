@@ -30,7 +30,13 @@ const API = {
   getPool: () => apiGet('/api/pool'),
   getStorage: () => apiGet('/api/storage'),
   getPlaylist: (ch) => apiGet(`/api/playlist/${ch}`),
-  savePlaylist: (ch, entries) => apiPost(`/api/playlist/${ch}`, { entries }),
+  savePlaylist: (ch, entries, name) => {
+    // Omit `name` when undefined so the server preserves the existing
+    // value (drag-reorder shouldn't wipe a user-set channel name).
+    const body = { entries };
+    if (name !== undefined) body.name = name;
+    return apiPost(`/api/playlist/${ch}`, body);
+  },
   renameFile: (path, newName) => apiPost('/api/file/rename', { path, newName }),
   deleteFile: (path) => apiPost('/api/file/delete', { path }),
   moveFile: (path, targetDir) => apiPost('/api/file/move', { path, targetDir }),

@@ -921,8 +921,44 @@ body {
 .tl-chan-name {
   font-family: 'Share Tech Mono', monospace;
   font-size: 9px;
-  color: #787c80;
+  color: #c8ccd0;
   letter-spacing: 0.1em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: text;
+  padding: 1px 2px;
+  border-radius: 2px;
+}
+.tl-chan-name:hover {
+  background: rgba(255,179,71,0.08);
+  color: var(--phosphor);
+}
+.tl-chan-name.is-placeholder {
+  color: #5a5e62;
+  font-style: italic;
+}
+.tl-chan-name-input {
+  width: 100%;
+  background: #050608;
+  border: 1px solid var(--phosphor);
+  color: var(--phosphor);
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 1px 4px;
+  border-radius: 2px;
+  outline: none;
+  text-shadow: 0 0 3px var(--phosphor);
+  box-shadow: inset 0 0 4px rgba(255,179,71,0.2), 0 0 3px rgba(255,179,71,0.3);
+  min-width: 0;
+}
+.tl-chan-name-input::placeholder {
+  color: #5a5e62;
+  font-style: italic;
+  text-shadow: none;
 }
 .tl-chan-stats {
   font-family: 'Share Tech Mono', monospace;

@@ -54,6 +54,16 @@ function buildChannelDirs(channelData) {
   return out;
 }
 
+function buildChannelNames(channelData) {
+  const out = {};
+  for (const [chStr, info] of Object.entries(channelData || {})) {
+    if (info && info.name) {
+      out[parseInt(chStr, 10)] = info.name;
+    }
+  }
+  return out;
+}
+
 function App() {
   const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
   const initial = window.__INITIAL_STATE;
@@ -70,6 +80,11 @@ function App() {
   const [channelDirs, setChannelDirs] = useState(
     () => buildChannelDirs(initialState.broadcast.channels)
   );
+  const [channelNames, setChannelNames] = useState(
+    () => buildChannelNames(initialState.broadcast.channels)
+  );
+  const [editingChannel, setEditingChannel] = useState(null);
+  const [editingChannelValue, setEditingChannelValue] = useState('');
   const [currentChannel, setCurrentChannel] = useState(initialState.currentChannel);
   const [activePlayer, setActivePlayer] = useState(initialState.activePlayer);
   const [playbackStopped, setPlaybackStopped] = useState(initialState.playbackStopped);
@@ -126,6 +141,7 @@ function App() {
             setPlaylists(buildInitialPlaylists(st.broadcast.channels));
             setPositionsByChannel(buildInitialPositions(st.broadcast.channels));
             setChannelDirs(buildChannelDirs(st.broadcast.channels));
+            setChannelNames(buildChannelNames(st.broadcast.channels));
             setCurrentChannel(st.currentChannel);
             setActivePlayer(st.activePlayer);
             setPlaybackStopped(st.playbackStopped);
@@ -144,6 +160,7 @@ function App() {
         setPlaylists(buildInitialPlaylists(st.broadcast.channels));
         setPositionsByChannel(buildInitialPositions(st.broadcast.channels));
         setChannelDirs(buildChannelDirs(st.broadcast.channels));
+        setChannelNames(buildChannelNames(st.broadcast.channels));
         setCurrentChannel(st.currentChannel);
         setActivePlayer(st.activePlayer);
         setPlaybackStopped(st.playbackStopped);
@@ -162,13 +179,19 @@ function App() {
         setPositionsByChannel(next);
       }),
       ws.subscribe('playlist.changed', (env) => {
-        API.getPlaylist(env.channel).then(({ entries }) => {
+        API.getPlaylist(env.channel).then(({ entries, name }) => {
           setPlaylists(p => ({
             ...p,
             [env.channel]: (entries || []).map(e => ({
               ...e, _uid: newUid(`r${env.channel}`),
             })),
           }));
+          setChannelNames(prev => {
+            const next = { ...prev };
+            if (name) next[env.channel] = name;
+            else delete next[env.channel];
+            return next;
+          });
         }).catch(() => {});
       }),
       ws.subscribe('pool.changed', () => {
@@ -209,6 +232,45 @@ function App() {
           ...p,
           [chan]: (server || []).map(e => ({ ...e, _uid: newUid(`r${chan}`) })),
         }));
+      }).catch(() => {});
+    });
+  };
+
+  const startRenameChannel = (chan) => {
+    setEditingChannel(chan);
+    setEditingChannelValue(channelNames[chan] || '');
+  };
+  const cancelRenameChannel = () => {
+    setEditingChannel(null);
+    setEditingChannelValue('');
+  };
+  const commitRenameChannel = () => {
+    if (editingChannel == null) return;
+    const chan = editingChannel;
+    const trimmed = editingChannelValue.trim();
+    const prev = channelNames[chan] || '';
+    setEditingChannel(null);
+    setEditingChannelValue('');
+    if (trimmed === prev) return;
+    setChannelNames(curr => {
+      const next = { ...curr };
+      if (trimmed) next[chan] = trimmed;
+      else delete next[chan];
+      return next;
+    });
+    const items = playlists[chan] || [];
+    const entries = items.map(e => ({ filename: e.filename, repeat: e.repeat || 1 }));
+    // Empty string clears the name on the server.
+    API.savePlaylist(chan, entries, trimmed).catch(err => {
+      console.warn('rename channel failed', chan, err);
+      // Roll back to whatever the server has.
+      API.getPlaylist(chan).then(({ name }) => {
+        setChannelNames(curr => {
+          const next = { ...curr };
+          if (name) next[chan] = name;
+          else delete next[chan];
+          return next;
+        });
       }).catch(() => {});
     });
   };
@@ -459,12 +521,38 @@ function App() {
                   (a, e) => a + ((e.durationSec || 0) * (e.repeat || 1)), 0
                 );
                 const isCurrent = ch.num === currentChannel;
+                const name = channelNames[ch.num];
+                const placeholder = `CHANNEL ${String(ch.num).padStart(2,'0')}`;
+                const isEditing = editingChannel === ch.num;
                 return (
                   <div key={ch.num} className={`tl-chan${isCurrent ? ' is-current' : ''}`}>
                     <div className="tl-chan-num">
                       <span className="tl-chan-digit">{String(ch.num).padStart(2,'0')}</span>
                     </div>
                     <div className="tl-chan-info">
+                      {isEditing ? (
+                        <input
+                          autoFocus
+                          className="tl-chan-name-input"
+                          value={editingChannelValue}
+                          maxLength={64}
+                          placeholder={placeholder}
+                          onChange={(e) => setEditingChannelValue(e.target.value)}
+                          onFocus={(e) => e.target.select()}
+                          onBlur={commitRenameChannel}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') commitRenameChannel();
+                            else if (e.key === 'Escape') cancelRenameChannel();
+                          }}
+                        />
+                      ) : (
+                        <div
+                          className={`tl-chan-name${name ? '' : ' is-placeholder'}`}
+                          title="Click to rename"
+                          onClick={() => startRenameChannel(ch.num)}>
+                          {name || placeholder}
+                        </div>
+                      )}
                       <div className="tl-chan-stats">
                         {items.length} · {fmtDur(totalDur)}
                       </div>

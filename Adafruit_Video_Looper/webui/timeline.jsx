@@ -138,6 +138,7 @@ function ChannelTimeline({
               ? (pos.loopPositionSec / 60) * PX_PER_MIN
               : null;
             const isCurrent = ch.num === currentChannel;
+            const palette = (window.CHANNEL_COLORS || {})[ch.num];
             return (
               <div key={ch.num} className={`tl-row-wrap${isCurrent ? ' is-current' : ''}`}>
                 <div
@@ -154,6 +155,8 @@ function ChannelTimeline({
                         entry={entry}
                         width={w}
                         isNes={isNesClip}
+                        colorStripe={palette ? palette.stripe : null}
+                        colorBg={palette ? palette.bg : null}
                         onDoubleClick={() => onSavePlaylist(ch.num, null, entry._uid, null)}
                         onContextMenu={(e) => {
                           e.preventDefault();
@@ -214,7 +217,7 @@ function clipPxWidth(entry) {
   return Math.max(8, (dur / 60) * PX_PER_MIN);
 }
 
-function ClipBlock({ entry, width, isNes, onDoubleClick, onContextMenu, onDragStart }) {
+function ClipBlock({ entry, width, isNes, colorStripe, colorBg, onDoubleClick, onContextMenu, onDragStart }) {
   const tooSmall = width < 60;
   if (isNes) {
     return (
@@ -234,6 +237,9 @@ function ClipBlock({ entry, width, isNes, onDoubleClick, onContextMenu, onDragSt
       </div>
     );
   }
+  const style = { width };
+  if (colorStripe) style['--clip-stripe'] = colorStripe;
+  if (colorBg) style['--clip-bg'] = colorBg;
   return (
     <div
       className="clip"
@@ -241,8 +247,9 @@ function ClipBlock({ entry, width, isNes, onDoubleClick, onContextMenu, onDragSt
       onDragStart={onDragStart}
       onDoubleClick={onDoubleClick}
       onContextMenu={onContextMenu}
-      style={{ width }}
+      style={style}
       title={`${entry.filename} — ${fmtDur(entry.durationSec)}${entry.repeat > 1 ? ` ×${entry.repeat}` : ''}`}>
+      <div className="clip-stripe" />
       <div className="clip-body">
         {!tooSmall && <div className="clip-name">{entry.filename}</div>}
         {!tooSmall && (

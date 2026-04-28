@@ -422,11 +422,18 @@ def _build_state_snapshot(pm) -> dict:
                         'durationSec': movie.duration,
                         'loopPositionSec': cumulative + float(seek_offset),
                     }
+            ch_dir = channel_paths.get(ch_num, '')
+            ch_name = None
+            if ch_dir:
+                meta = playlist_io.read_playlist_meta(ch_dir)
+                if meta is not None:
+                    ch_name = meta['name']
             channels[str(ch_num)] = {
                 'totalDurationSec': loop_total,
                 'current': cur,
                 'entries': entries,
-                'channelDir': channel_paths.get(ch_num, ''),
+                'channelDir': ch_dir,
+                'name': ch_name,
             }
 
     cfg = {}
@@ -516,14 +523,20 @@ async def get_playlist_handler(request: Request):
         )
     pl = bm._channel_playlists.get(ch)
     if pl is None:
-        return JSONResponse({'channel': ch, 'entries': []})
+        return JSONResponse({'channel': ch, 'entries': [], 'name': None})
     entries = [{
         'filename': m.filename,
         'repeat': m.repeats,
         'durationSec': m.duration,
         'fileType': m.content_type,
     } for m in pl._movies]
-    return JSONResponse({'channel': ch, 'entries': entries})
+    name = None
+    channel_dir = _channel_dir_for(ch)
+    if channel_dir is not None:
+        meta = playlist_io.read_playlist_meta(channel_dir)
+        if meta is not None:
+            name = meta['name']
+    return JSONResponse({'channel': ch, 'entries': entries, 'name': name})
 
 
 async def post_playlist_handler(request: Request):
@@ -556,6 +569,24 @@ async def post_playlist_handler(request: Request):
             status_code=404,
         )
 
+    # Name handling — three cases the wire format must distinguish:
+    #   key absent           → preserve existing name (drag-reorder path)
+    #   '' or None           → clear the name
+    #   non-empty string     → set
+    name_kw = {}
+    if 'name' in body:
+        try:
+            name_kw['name'] = playlist_io.clean_name(body.get('name'))
+        except ValueError as e:
+            return JSONResponse(
+                {'ok': False, 'error': 'bad-name', 'detail': str(e)},
+                status_code=400,
+            )
+    else:
+        existing_meta = playlist_io.read_playlist_meta(channel_dir)
+        if existing_meta is not None:
+            name_kw['name'] = existing_meta['name']
+
     try:
         existing = set(os.listdir(channel_dir))
     except OSError as e:
@@ -583,7 +614,7 @@ async def post_playlist_handler(request: Request):
         cleaned.append({'filename': fn, 'repeat': rpt})
 
     try:
-        playlist_io.write_playlist_json(channel_dir, cleaned)
+        playlist_io.write_playlist_json(channel_dir, cleaned, **name_kw)
     except (ValueError, OSError) as e:
         log.exception('write_playlist_json failed: %s', e)
         return JSONResponse(
@@ -686,9 +717,10 @@ def _rewrite_playlist_after_filename_change(
     json_path = parent / playlist_io.PLAYLIST_FILENAME
     if not json_path.exists():
         return []
-    ents = playlist_io.read_playlist_json(str(parent))
-    if ents is None:
+    meta = playlist_io.read_playlist_meta(str(parent))
+    if meta is None:
         return []
+    ents = meta['entries']
     if new_name is None:
         new_ents = [e for e in ents if e['filename'] != old_name]
     else:
@@ -700,7 +732,7 @@ def _rewrite_playlist_after_filename_change(
     if new_ents == ents:
         return []
     try:
-        playlist_io.write_playlist_json(str(parent), new_ents)
+        playlist_io.write_playlist_json(str(parent), new_ents, name=meta['name'])
     except (ValueError, OSError) as e:
         log.exception('rewriting playlist.json failed: %s', e)
         return []
