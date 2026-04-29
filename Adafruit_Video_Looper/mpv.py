@@ -254,6 +254,21 @@ class MPVPlayer:
             log.exception('ipc exception: %s', e)
             return False
 
+    def _is_process_alive(self) -> bool:
+        """True if mpv is alive (IPC-able), regardless of idle state.
+
+        Used by play() to choose the IPC fast-path. Distinct from
+        is_playing(), which factors in idle-active so the main loop's
+        eov detection can fire when a clip ends naturally — at that
+        point mpv is alive but idle, and the next play() call should
+        still go through IPC, not kill-and-cold-spawn.
+        """
+        process = self._process
+        if process is None:
+            return False
+        process.poll()
+        return process.returncode is None
+
     def play(self, movie, loop=None, vol=0, seek_position=None):
         """Play the provided movie file, optionally looping it repeatedly.
 
@@ -265,8 +280,15 @@ class MPVPlayer:
             vol: Volume in millibels (omxplayer compatibility, converted to percentage)
             seek_position: Seek to this position in seconds (for broadcast mode)
         """
-        # Try IPC if mpv is already running (fast channel switching)
-        if self.is_playing():
+        # Try IPC if mpv is alive (even when idle after a natural EOF —
+        # is_playing() correctly reports False there, but the process is
+        # still IPC-able and a loadfile will resume playback).
+        if self._is_process_alive():
+            # We're about to actively load a new file; clear any pending
+            # idle observations so the next is_playing() poll doesn't
+            # carry stale debounce state from the prior clip's EOF.
+            self._idle_observation_count = 0
+            self._play_requested_time = time.time()
             if self._ipc_sock:
                 if self._load_via_ipc(movie, seek_position, loop=loop):
                     return  # Success - no need to restart
