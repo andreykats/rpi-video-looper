@@ -84,7 +84,7 @@ function LED({ on, color = 'red', label }) {
 }
 
 // ─────────── Video Pool Sidebar ───────────
-function VideoPoolSidebar({ pool, uploads, onDragStart, usedIds, onRename, onDelete, onRenameFolder, onDeleteFolder, onUpload }) {
+function VideoPoolSidebar({ pool, uploads, uploadExtensions, onDragStart, usedIds, onRename, onDelete, onRenameFolder, onDeleteFolder, onUpload }) {
   const [hideUsed, setHideUsed] = React.useState(false);
   const [sortBy, setSortBy] = React.useState('name'); // name | size
 
@@ -290,7 +290,9 @@ function VideoPoolSidebar({ pool, uploads, onDragStart, usedIds, onRename, onDel
             ref={fileInputRef}
             type="file"
             multiple
-            accept=".avi,.mov,.mkv,.mp4,.m4v,.webm,.flv,.ts,.nes,.fds,.nsf,video/*"
+            accept={(uploadExtensions && uploadExtensions.length)
+              ? uploadExtensions.map(e => '.' + e).join(',')
+              : ''}
             style={{ display: 'none' }}
             onChange={(e) => {
               const files = Array.from(e.target.files || []);

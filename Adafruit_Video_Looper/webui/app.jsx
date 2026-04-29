@@ -103,6 +103,7 @@ function App() {
   const [activePlayer, setActivePlayer] = useState(initialState.activePlayer);
   const [playbackStopped, setPlaybackStopped] = useState(initialState.playbackStopped);
   const [config, setConfig] = useState(initialState.config || {});
+  const [uploadExtensions, setUploadExtensions] = useState(initialState.uploadExtensions || []);
   const [storage, setStorage] = useState(null);
   const [logs, setLogs] = useState([]);
   const [logOpen, setLogOpen] = useState(false);
@@ -178,6 +179,7 @@ function App() {
             setActivePlayer(st.activePlayer);
             setPlaybackStopped(st.playbackStopped);
             setConfig(st.config || {});
+            setUploadExtensions(st.uploadExtensions || []);
             setPool(flattenPool(p));
             setPoolTreeRaw(p);
             setStorage(store);
@@ -197,6 +199,7 @@ function App() {
         setActivePlayer(st.activePlayer);
         setPlaybackStopped(st.playbackStopped);
         setConfig(st.config || {});
+        setUploadExtensions(st.uploadExtensions || []);
         if (typeof st.broadcastElapsedSec === 'number') {
           setBroadcastBaseline({
             elapsedSec: st.broadcastElapsedSec,
@@ -654,6 +657,7 @@ function App() {
         <VideoPoolSidebar
           pool={pool}
           uploads={uploads}
+          uploadExtensions={uploadExtensions}
           onDragStart={handlePoolDragStart}
           usedIds={usedIds}
           onRename={handleRenameFile}

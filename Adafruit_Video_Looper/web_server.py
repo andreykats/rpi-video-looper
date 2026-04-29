@@ -167,6 +167,26 @@ def _channel_dir_for(ch: int) -> Optional[str]:
     return None
 
 
+def _upload_extensions(pm) -> tuple:
+    """Resolve the upload allow-list. Reads `[web] upload_extensions`
+    (comma- or whitespace-separated) and falls back to VIDEO_EXTS when
+    the key is absent or empty. Always lowercased, dot-stripped, deduped.
+    """
+    try:
+        raw = pm._config.get('web', 'upload_extensions', fallback='')
+    except (configparser.NoSectionError, configparser.NoOptionError):
+        raw = ''
+    tokens = re.split(r'[,\s]+', raw or '')
+    out = []
+    seen = set()
+    for t in tokens:
+        ext = t.strip().lower().lstrip('.')
+        if ext and ext not in seen:
+            seen.add(ext)
+            out.append(ext)
+    return tuple(out) if out else VIDEO_EXTS
+
+
 def _primary_usb_root() -> Optional[str]:
     """Pick the USB root that holds the channel content. Some sticks
     expose two partitions (e.g. a small EFI + a large data volume); we
@@ -509,6 +529,7 @@ def _build_state_snapshot(pm) -> dict:
         },
         'mountRoots': _usb_roots(),
         'config': cfg,
+        'uploadExtensions': list(_upload_extensions(pm)),
     }
 
 
@@ -904,12 +925,14 @@ async def post_file_upload_handler(request: Request):
     — no multipart parser, no memory buffering, works for arbitrarily
     large videos.
     """
+    pm = request.app.state.pm
     broker: Broker = request.app.state.broker
     name = (request.query_params.get('name') or '').strip()
     if not name or '/' in name or name in ('.', '..') or name.startswith('.'):
         return JSONResponse({'ok': False, 'error': 'invalid-name'}, status_code=400)
     ext = os.path.splitext(name)[1].lower().lstrip('.')
-    if ext not in VIDEO_EXTS:
+    allowed = _upload_extensions(pm)
+    if ext not in allowed:
         return JSONResponse(
             {'ok': False, 'error': 'bad-extension', 'detail': ext or '(none)'},
             status_code=400,
