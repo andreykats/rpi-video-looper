@@ -26,6 +26,15 @@ body {
   color: #2a2218;
   background: #1a1410;
   -webkit-font-smoothing: antialiased;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Inputs and the log drawer keep native text selection so users can
+   copy log lines, edit channel names, type into config fields, etc. */
+input, textarea, [contenteditable="true"], .log-drawer-body {
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 /* ─── Chassis frame ─── */
