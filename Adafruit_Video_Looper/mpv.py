@@ -228,22 +228,25 @@ class MPVPlayer:
                 self._send_ipc_command_verified('loadfile', BLANK_IMAGE_PATH, 'replace')
                 time.sleep(BLANK_RENDER_S)
 
-            # Use loadfile command to replace current video
+            # Use loadfile command to replace current video.
             # MPV JSON IPC format: loadfile <url> [<flags> [<index> [<options>]]]
-            # Options must be a dict, not a string
-            options = {}
+            # Options is a dict in JSON IPC.
+            #
+            # Always set loop-file explicitly. If we left it unset, mpv
+            # would inherit the global default — and the global default
+            # is `inf` whenever the player was cold-started with
+            # `--loop-file=inf` for the empty-channel default video.
+            # Empirically, per-file options do not always restore on
+            # loadfile-replace, so a regular content-channel load would
+            # silently keep looping the first clip.
+            options = {
+                'loop-file': 'inf' if (loop is not None and loop <= -1) else 'no',
+            }
             if seek_position and seek_position > 0:
                 options['start'] = str(int(seek_position))
-            if loop is not None and loop <= -1:
-                options['loop-file'] = 'inf'
-            if options:
-                success = self._send_ipc_command_verified(
-                    'loadfile', movie.target, 'replace', -1, options
-                )
-            else:
-                success = self._send_ipc_command_verified(
-                    'loadfile', movie.target, 'replace'
-                )
+            success = self._send_ipc_command_verified(
+                'loadfile', movie.target, 'replace', -1, options
+            )
 
             if success:
                 log.info('ipc-load file=%s', movie.filename)
