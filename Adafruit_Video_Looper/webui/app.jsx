@@ -18,7 +18,6 @@ function buildInitialPlaylists(channelData) {
     const ch = parseInt(chStr, 10);
     out[ch] = (info.entries || []).map((e) => ({
       filename: e.filename,
-      repeat: e.repeat || 1,
       durationSec: e.durationSec || 0,
       fileType: e.fileType,
       _uid: newUid(`s${ch}`),
@@ -71,6 +70,17 @@ function App() {
 
   const [pool, setPool] = useState(() => flattenPool(initial.pool));
   const [poolTreeRaw, setPoolTreeRaw] = useState(initial.pool);
+  // Broadcast clock — anchored to the server's start time. We tick it
+  // locally in 1 s steps for the +HH:MM:SS display; state.positions
+  // envelopes (every 500 ms) and the broadcast.reset event re-anchor the
+  // baseline so client/server can't drift more than ~1 s.
+  const [broadcastBaseline, setBroadcastBaseline] = useState(() => ({
+    elapsedSec: initialState.broadcastElapsedSec || 0,
+    receivedAt: performance.now(),
+  }));
+  const [broadcastNowSec, setBroadcastNowSec] = useState(
+    () => initialState.broadcastElapsedSec || 0
+  );
   const [playlists, setPlaylists] = useState(
     () => buildInitialPlaylists(initialState.broadcast.channels)
   );
@@ -128,6 +138,17 @@ function App() {
     return () => { cancelled = true; };
   }, []);
 
+  // Broadcast clock tick — derive current elapsed from the latest
+  // baseline + wall delta. Updated every second for the +HH:MM:SS
+  // readout; the timeline playhead reads broadcastNowSec too.
+  useEffect(() => {
+    const id = setInterval(() => {
+      const dt = (performance.now() - broadcastBaseline.receivedAt) / 1000;
+      setBroadcastNowSec(broadcastBaseline.elapsedSec + dt);
+    }, 1000);
+    return () => clearInterval(id);
+  }, [broadcastBaseline]);
+
   // ─── WebSocket subscription ───
   useEffect(() => {
     const ws = connectWebSocket();
@@ -164,6 +185,13 @@ function App() {
         setActivePlayer(st.activePlayer);
         setPlaybackStopped(st.playbackStopped);
         setConfig(st.config || {});
+        if (typeof st.broadcastElapsedSec === 'number') {
+          setBroadcastBaseline({
+            elapsedSec: st.broadcastElapsedSec,
+            receivedAt: performance.now(),
+          });
+          setBroadcastNowSec(st.broadcastElapsedSec);
+        }
       }),
       ws.subscribe('state.channel', (env) => setCurrentChannel(env.channel)),
       ws.subscribe('state.playback', (env) => {
@@ -176,6 +204,23 @@ function App() {
           next[parseInt(chStr, 10)] = p;
         }
         setPositionsByChannel(next);
+        if (typeof env.broadcastElapsedSec === 'number') {
+          setBroadcastBaseline({
+            elapsedSec: env.broadcastElapsedSec,
+            receivedAt: performance.now(),
+          });
+          setBroadcastNowSec(env.broadcastElapsedSec);
+        }
+      }),
+      ws.subscribe('broadcast.reset', () => {
+        // Snap clock to 0 immediately so the +HH:MM:SS readout and the
+        // timeline playhead start from zero without waiting for the next
+        // state.positions envelope.
+        setBroadcastBaseline({
+          elapsedSec: 0,
+          receivedAt: performance.now(),
+        });
+        setBroadcastNowSec(0);
       }),
       ws.subscribe('playlist.changed', (env) => {
         API.getPlaylist(env.channel).then(({ entries, name }) => {
@@ -223,7 +268,7 @@ function App() {
 
   // ─── Playlist mutations ───
   const persistPlaylist = (chan, items) => {
-    const entries = items.map(e => ({ filename: e.filename, repeat: e.repeat || 1 }));
+    const entries = items.map(e => ({ filename: e.filename }));
     return API.savePlaylist(chan, entries).catch(err => {
       console.warn('savePlaylist failed', chan, err);
       API.getPlaylist(chan).then(({ entries: server }) => {
@@ -258,7 +303,7 @@ function App() {
       return next;
     });
     const items = playlists[chan] || [];
-    const entries = items.map(e => ({ filename: e.filename, repeat: e.repeat || 1 }));
+    const entries = items.map(e => ({ filename: e.filename }));
     // Empty string clears the name on the server.
     API.savePlaylist(chan, entries, trimmed).catch(err => {
       console.warn('rename channel failed', chan, err);
@@ -306,7 +351,6 @@ function App() {
     const fileInChannel = poolItem.absParent === channelDir;
     const newEntry = {
       filename: poolItem.name,
-      repeat: 1,
       durationSec: poolItem.durationSec || 0,
       fileType: poolItem.fileType,
       _uid: newUid('drop'),
@@ -417,8 +461,18 @@ function App() {
 
   const phosphor = PHOSPHOR[t.phosphor] || PHOSPHOR.amber;
   const curPos = positionsByChannel[currentChannel];
-  const bcastSec = curPos ? curPos.loopPositionSec : 0;
   const runtimeSec = curPos ? curPos.positionSec : 0;
+  const bcastSec = broadcastNowSec;
+
+  const handleResetBroadcast = async () => {
+    if (!window.confirm('Restart the broadcast clock? All channels will jump back to the start of their playlists.')) return;
+    try {
+      await API.resetBroadcast();
+    } catch (e) {
+      const detail = e.detail && e.detail.error ? e.detail.error : e.message;
+      window.alert('Restart broadcast failed: ' + detail);
+    }
+  };
 
   useEffect(() => {
     const handler = (e) => {
@@ -434,7 +488,7 @@ function App() {
   const renderChannelHeader = (chNum) => {
     const items = playlists[chNum] || [];
     const totalDur = items.reduce(
-      (a, e) => a + ((e.durationSec || 0) * (e.repeat || 1)), 0
+      (a, e) => a + (e.durationSec || 0), 0
     );
     const isCurrent = chNum === currentChannel;
     const name = channelNames[chNum];
@@ -507,7 +561,7 @@ function App() {
             <div className="phosphor-screen">
               <div className="phos-row">
                 <span>BCAST</span>
-                <span>{fmtDur(bcastSec)}</span>
+                <span>{fmtBcastElapsed(bcastSec)}</span>
               </div>
               <div className="phos-row">
                 <span>CH {String(currentChannel).padStart(2,'0')}</span>
@@ -527,6 +581,9 @@ function App() {
             />
             <HwButton label="▶ SYNC" color="green" disabled />
             <HwButton label="● REC" color="red" disabled />
+            <HwButton label="⟳ RESTART BCAST" color="orange"
+              onClick={handleResetBroadcast}
+              disabled={restarting} />
             <HwButton label="⟳ REBOOT" color="beige" onClick={() => {
               if (window.confirm('Reboot the Pi? The looper and the web UI will go down for ~30 seconds.')) {
                 handleReboot();
@@ -560,7 +617,7 @@ function App() {
               <EngravedLabel size="sm">CHANNEL</EngravedLabel>
             </div>
             <div className="tl-corner-r">
-              <EngravedLabel size="sm">BROADCAST TIMECODE — 6 HR FRAME</EngravedLabel>
+              <EngravedLabel size="sm">BROADCAST TIMECODE — SHARED CLOCK</EngravedLabel>
             </div>
           </div>
 
@@ -572,6 +629,7 @@ function App() {
               positionsByChannel={positionsByChannel}
               currentChannel={currentChannel}
               mountRoot={mountRoot}
+              broadcastElapsedSec={broadcastNowSec}
               onSavePlaylist={handleSavePlaylist}
               onMovePoolFileToChannel={handleAddPoolItem}
               renderChannelHeader={renderChannelHeader}

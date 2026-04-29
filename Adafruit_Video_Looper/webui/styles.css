@@ -1708,16 +1708,60 @@ body {
   letter-spacing: 0.15em;
 }
 
-/* The position:relative on tl-row is needed so per-row playhead absolute
-   positioning works. (The original tl-row may already be relative; this
-   is belt-and-suspenders.) */
+/* tl-row is the flexbox containing real entries + ghost iterations.
+   position:relative anchors the empty-state placeholder. */
 .tl-row { position: relative; }
 
 /* Pool sidebar tweaks (remove kind-stripe leftover space) */
 .pool-kind { display: none; }
 
-/* Hide the original single-global playhead overlay (replaced by per-row) */
+/* Legacy per-row and old global playhead overlays — both replaced by
+   .tl-playhead-global below. */
 .tl-playhead { display: none; }
+.tl-playhead-row { display: none; }
+
+/* Single global playhead — spans every channel row. The wrap-safe
+   transition is handled in JS via a key bump on (elapsed % tMax)
+   wrap, so a CSS transition here is safe to keep for smooth motion
+   between 500 ms position envelopes. */
+.tl-playhead-global {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  pointer-events: none;
+  z-index: 6;
+  transition: left 500ms linear;
+}
+.tl-playhead-global-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -1px;
+  width: 2px;
+  background: #ff3030;
+  box-shadow: 0 0 8px rgba(255, 60, 60, 0.7);
+}
+
+/* Ghost iterations — read-only previews of upcoming loop repeats. */
+.clip.clip-ghost {
+  opacity: 0.35;
+  cursor: default;
+  filter: saturate(0.6);
+  pointer-events: none;
+}
+.tl-ghost-tail {
+  align-self: stretch;
+  opacity: 0.35;
+  pointer-events: none;
+  background-image: repeating-linear-gradient(
+    135deg,
+    rgba(255, 179, 71, 0.2) 0,
+    rgba(255, 179, 71, 0.2) 6px,
+    rgba(255, 179, 71, 0.05) 6px,
+    rgba(255, 179, 71, 0.05) 12px
+  );
+}
 
 /* Kiosk-style: hide scrollbars everywhere; scrolling still works via wheel/drag/keys */
 * { scrollbar-width: none; }

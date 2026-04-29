@@ -18,6 +18,13 @@ BLANK_RENDER_S = 0.3  # let mpv actually present the blank frame before
                       # whose demuxer/decoder state takes ~200 ms to tear
                       # down before the blank PNG can paint.
 
+# Number of consecutive idle-active=True observations needed before
+# is_playing() reports False. The main loop polls every 100 ms, so two
+# ticks ≈ 200 ms — long enough to ride out a single transient idle blip
+# during the blank-PNG slate transition, short enough that a real EOF is
+# observed within ~one frame of when it would have been otherwise.
+_IDLE_DEBOUNCE_TICKS = 2
+
 log = logging.getLogger('looper.mpv')
 
 
@@ -63,6 +70,10 @@ class MPVPlayer:
         self._process = None
         self._ipc_sock = None
         self._play_requested_time = 0  # Prevent duplicate plays during startup
+        # Counter for consecutive idle-active=True observations from the
+        # short-lived IPC query. Reset on any non-True observation. See
+        # _IDLE_DEBOUNCE_TICKS and is_playing().
+        self._idle_observation_count = 0
         self._load_config(config)
         _ensure_blank_image()
 
@@ -195,8 +206,13 @@ class MPVPlayer:
             self._ipc_sock = None  # Mark socket as dead
             return False
 
-    def _load_via_ipc(self, movie, seek_position=None):
+    def _load_via_ipc(self, movie, seek_position=None, loop=None):
         """Load new video via IPC without restarting mpv.
+
+        `loop=-1` requests an infinite per-file loop (used for the empty-
+        channel default video). mpv applies the option only to this
+        loadfile, so the next regular loadfile naturally drops back to
+        no-loop without needing to clear it explicitly.
 
         Returns True if successful, False if IPC failed.
         """
@@ -215,14 +231,19 @@ class MPVPlayer:
             # Use loadfile command to replace current video
             # MPV JSON IPC format: loadfile <url> [<flags> [<index> [<options>]]]
             # Options must be a dict, not a string
+            options = {}
             if seek_position and seek_position > 0:
-                # With seek position: pass options as dict with index=-1
+                options['start'] = str(int(seek_position))
+            if loop is not None and loop <= -1:
+                options['loop-file'] = 'inf'
+            if options:
                 success = self._send_ipc_command_verified(
-                    'loadfile', movie.target, 'replace', -1,
-                    {'start': str(int(seek_position))}
+                    'loadfile', movie.target, 'replace', -1, options
                 )
             else:
-                success = self._send_ipc_command_verified('loadfile', movie.target, 'replace')
+                success = self._send_ipc_command_verified(
+                    'loadfile', movie.target, 'replace'
+                )
 
             if success:
                 log.info('ipc-load file=%s', movie.filename)
@@ -237,20 +258,22 @@ class MPVPlayer:
         """Play the provided movie file, optionally looping it repeatedly.
 
         Args:
-            movie: Movie object to play (has .target for file path, .repeats for loop count)
-            loop: Loop count (-1 for infinite). If None, uses movie.repeats
+            movie: Movie object to play (.target is the file path)
+            loop: -1 for infinite per-file loop. None / any other value
+                means "no loop"; per-clip repeat counts are gone — users
+                duplicate entries in the playlist instead.
             vol: Volume in millibels (omxplayer compatibility, converted to percentage)
             seek_position: Seek to this position in seconds (for broadcast mode)
         """
         # Try IPC if mpv is already running (fast channel switching)
         if self.is_playing():
             if self._ipc_sock:
-                if self._load_via_ipc(movie, seek_position):
+                if self._load_via_ipc(movie, seek_position, loop=loop):
                     return  # Success - no need to restart
             else:
                 # Socket not ready - try to connect (process may have created it late)
                 if self._connect_ipc(timeout=0.5):
-                    if self._load_via_ipc(movie, seek_position):
+                    if self._load_via_ipc(movie, seek_position, loop=loop):
                         return  # Success after reconnect
                 # Socket still not available - fall through to kill and restart
                 log.info('ipc socket unavailable, restarting player')
@@ -307,13 +330,11 @@ class MPVPlayer:
         volume_pct = self._convert_volume(vol)
         args.extend(['--volume={}'.format(volume_pct)])
 
-        # Handle looping
-        if loop is None:
-            loop = movie.repeats
-        if loop <= -1:
+        # Handle looping. Only --loop-file=inf is meaningful in the new
+        # model — used for the empty-channel default video at cold start.
+        # Per-clip repeats are gone; the playlist holds duplicates.
+        if loop is not None and loop <= -1:
             args.extend(['--loop-file=inf'])
-        elif loop > 1:
-            args.extend(['--loop-file={}'.format(loop)])
 
         # Add extra args from config
         if self._extra_args:
@@ -362,22 +383,101 @@ class MPVPlayer:
         elif key.lower() == 'i':
             self._send_ipc_command('add', 'chapter', -1)
 
+    def _query_idle_active(self, timeout=0.05):
+        """Ask mpv whether it's idle via a short-lived AF_UNIX IPC query.
+
+        Returns True / False / None — None when the socket is missing,
+        the connection times out, or the response is malformed. Uses a
+        fresh connection each call (mpv accepts multiple IPC clients) so
+        it never contends with the persistent command socket used for
+        loadfile operations.
+        """
+        if not os.path.exists(SOCKET_PATH):
+            return None
+        try:
+            s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            s.settimeout(timeout)
+            s.connect(SOCKET_PATH)
+        except OSError:
+            return None
+        try:
+            cmd = json.dumps({'command': ['get_property', 'idle-active'],
+                              'request_id': 1})
+            s.sendall((cmd + '\n').encode())
+            buf = b''
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                try:
+                    chunk = s.recv(4096)
+                except socket.timeout:
+                    return None
+                if not chunk:
+                    return None
+                buf += chunk
+                while b'\n' in buf:
+                    line, buf = buf.split(b'\n', 1)
+                    if not line.strip():
+                        continue
+                    try:
+                        msg = json.loads(line)
+                    except ValueError:
+                        continue
+                    if msg.get('request_id') != 1:
+                        # Skip async events arriving on the same socket.
+                        continue
+                    data = msg.get('data')
+                    if isinstance(data, bool):
+                        return data
+                    return None
+            return None
+        except OSError:
+            return None
+        finally:
+            try:
+                s.close()
+            except OSError:
+                pass
+
     def is_playing(self):
         """Return true if the video player is running, false otherwise.
 
         Called frequently in main loop - must be lightweight!
         Also returns True during startup grace period to prevent duplicate plays.
+
+        Detects natural EOF via mpv's `idle-active` property. mpv runs
+        with `--idle=yes --keep-open=no` so the process survives between
+        loadfiles; without this query, an alive-but-idle mpv would look
+        playing forever and the channel would freeze on the last frame.
+        Two consecutive idle observations are required so a one-tick
+        glitch during the blank-PNG slate transition doesn't fire a
+        spurious EOV — natural EOF stays idle persistently and confirms
+        on the second tick.
         """
-        # During startup, return True to prevent duplicate play calls
+        # During startup, return True to prevent duplicate play calls.
         if time.time() - self._play_requested_time < 2.0:
+            self._idle_observation_count = 0
             return True
 
-        # Capture local reference to avoid race condition with stop()
+        # Capture local reference to avoid race condition with stop().
         process = self._process
         if process is None:
+            self._idle_observation_count = 0
             return False
         process.poll()
-        return process.returncode is None
+        if process.returncode is not None:
+            self._idle_observation_count = 0
+            return False
+
+        idle = self._query_idle_active()
+        if idle is True:
+            self._idle_observation_count += 1
+            return self._idle_observation_count < _IDLE_DEBOUNCE_TICKS
+        # idle is False (mpv playing) or None (IPC failure). Reset the
+        # counter and report alive — the None path keeps the legacy
+        # process-poll-only behavior so a transient socket failure can't
+        # create a false EOV advance.
+        self._idle_observation_count = 0
+        return True
 
     def stop(self, block=True):
         """Stop the video player. Always non-blocking for fast channel switching."""

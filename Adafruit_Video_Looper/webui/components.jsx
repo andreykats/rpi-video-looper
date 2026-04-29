@@ -9,6 +9,17 @@ function fmtDur(sec) {
   return `${m}:${String(s).padStart(2,'0')}`;
 }
 
+// Format an elapsed-broadcast offset as +HH:MM:SS — used for the global
+// broadcast clock display so the user can read the shared T0 baseline.
+function fmtBcastElapsed(sec) {
+  if (!isFinite(sec) || sec < 0) sec = 0;
+  sec = Math.floor(sec);
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  return `+${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+}
+
 // Format minutes from start as HH:MM (broadcast clock starting at e.g. 18:00)
 function fmtClock(minFromStart, baseHour = 18) {
   const totalMin = baseHour * 60 + minFromStart;
@@ -772,7 +783,7 @@ function fmtLogTs(ts) {
 }
 
 Object.assign(window, {
-  fmtDur, fmtClock, fmtBytes,
+  fmtDur, fmtClock, fmtBcastElapsed, fmtBytes,
   HwButton, EngravedLabel, LED,
   VideoPoolSidebar, SettingsModal, LogDrawer,
 });

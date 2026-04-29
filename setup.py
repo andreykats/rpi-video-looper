@@ -21,6 +21,7 @@ setup(name              = 'Adafruit_Video_Looper',
               'webui/*.html',
               'webui/*.css',
               'webui/*.jsx',
+              'assets/default.mp4',
           ],
       },
       include_package_data = True)

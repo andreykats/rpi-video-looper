@@ -31,9 +31,13 @@ const API = {
   getStorage: () => apiGet('/api/storage'),
   getPlaylist: (ch) => apiGet(`/api/playlist/${ch}`),
   savePlaylist: (ch, entries, name) => {
-    // Omit `name` when undefined so the server preserves the existing
-    // value (drag-reorder shouldn't wipe a user-set channel name).
-    const body = { entries };
+    // Server expects {filename} per entry (schema v3 — repeat is gone;
+    // duplicates encode repetition). Omit `name` when undefined so the
+    // server preserves the existing value (drag-reorder shouldn't wipe
+    // a user-set channel name).
+    const body = {
+      entries: entries.map(e => ({ filename: e.filename })),
+    };
     if (name !== undefined) body.name = name;
     return apiPost(`/api/playlist/${ch}`, body);
   },
@@ -45,6 +49,7 @@ const API = {
   getConfig: () => apiGet('/api/config'),
   saveConfig: (cfg) => apiPost('/api/config', cfg),
   reboot: () => apiPost('/api/system/reboot', {}),
+  resetBroadcast: () => apiPost('/api/broadcast/reset', {}),
 };
 
 window.API = API;

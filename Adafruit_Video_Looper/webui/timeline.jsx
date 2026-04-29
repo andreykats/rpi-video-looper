@@ -1,20 +1,49 @@
 // ─────────── Timeline ───────────
-// Each channel row is a horizontal stack of clip blocks. Clips can be:
-//  - dragged from the pool (creates a new instance, possibly moving the
-//    underlying file into the channel folder server-side)
-//  - dragged within or between rows (reorders)
+// All channel rows share one horizontal time axis whose width represents
+// `tMax = max(channel total_duration over all channels)`. Channels
+// shorter than tMax render ghost iterations (faded duplicates) of their
+// real entries to fill the remaining width, denoting upcoming repeats.
+// A single global playhead at `(elapsed % tMax) / tMax * row_width` runs
+// across all rows so the user can read down to see what's playing on
+// each channel at any instant.
 //
 // Playlist entries arrive from the server with the shape:
-//   { filename, repeat, durationSec, fileType, _uid }
-// where _uid is a client-side counter we attach for stable React keys
-// (the same filename can appear multiple times in a single channel).
+//   { filename, durationSec, fileType, _uid }
+// where _uid is a client-side counter we attach for stable React keys.
+// Each entry plays exactly once per loop iteration; users drag a clip
+// in twice to repeat it.
 
-const PX_PER_MIN = 8;
-const TIMELINE_MIN = 360;          // 6-hour visual frame
-const HEADER_PX = 180;             // must match CSS .tl-chan-cell width
+const ROW_WIDTH_PX = 2880;        // visual width of a full tMax row
+const HEADER_PX = 180;            // must match CSS .tl-chan-cell width
+const TMAX_FALLBACK_S = 60;       // when no channel has content (rare)
+const GHOST_CAP = 30;             // hard cap on ghost iterations per row
+                                  // — anything past this tiles via CSS
+                                  // background to avoid pathological DOM
+
+function rulerStepFor(tMax) {
+  // Pick an interval that yields somewhere around 6–24 ticks across the
+  // visible range, in human-friendly units.
+  if (tMax <= 60)    return 5;       // every 5 s
+  if (tMax <= 300)   return 30;      // every 30 s
+  if (tMax <= 1800)  return 60;      // every 1 min
+  if (tMax <= 7200)  return 300;     // every 5 min
+  if (tMax <= 21600) return 1800;    // every 30 min
+  return 3600;                       // every 1 hour
+}
+
+function fmtTickLabel(sec) {
+  sec = Math.max(0, Math.floor(sec));
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  if (h) return `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+  if (m) return `${m}:${String(s).padStart(2,'0')}`;
+  return `${s}s`;
+}
 
 function ChannelTimeline({
-  channels, playlists, increment, positionsByChannel, currentChannel,
+  channels, playlists, positionsByChannel, currentChannel,
+  broadcastElapsedSec,
   mountRoot, onSavePlaylist, onMovePoolFileToChannel, renderChannelHeader,
 }) {
   const dragRef = React.useRef(null);
@@ -41,6 +70,55 @@ function ChannelTimeline({
     return () => { delete window.__poolDragBridge; };
   }, []);
 
+  // Per-channel total durations and tMax.
+  const channelTotals = React.useMemo(() => {
+    const out = {};
+    for (const ch of channels) {
+      const items = playlists[ch.num] || [];
+      // ROM entries have durationSec=0; sum naturally excludes them so
+      // ROM-only channels stay total=0 and don't drive tMax.
+      out[ch.num] = items.reduce((a, e) => a + (e.durationSec || 0), 0);
+    }
+    return out;
+  }, [channels, playlists]);
+
+  const tMax = React.useMemo(() => {
+    let m = 0;
+    for (const ch of channels) {
+      if (channelTotals[ch.num] > m) m = channelTotals[ch.num];
+    }
+    return m;
+  }, [channels, channelTotals]);
+
+  const effectiveTMax = tMax > 0 ? tMax : TMAX_FALLBACK_S;
+  const pxPerSec = ROW_WIDTH_PX / effectiveTMax;
+  const totalPx = ROW_WIDTH_PX;
+
+  // Ruler ticks.
+  const tickStep = rulerStepFor(effectiveTMax);
+  const ticks = React.useMemo(() => {
+    const out = [];
+    for (let s = 0; s <= effectiveTMax; s += tickStep) out.push(s);
+    return out;
+  }, [effectiveTMax, tickStep]);
+
+  // Single global playhead position. When the elapsed wrap detection
+  // fires, bump a key so React remounts the element without animating
+  // backwards across the row.
+  const elapsedSafe = (typeof broadcastElapsedSec === 'number'
+                       && isFinite(broadcastElapsedSec))
+    ? Math.max(0, broadcastElapsedSec) : 0;
+  const playheadFrac = tMax > 0 ? (elapsedSafe % tMax) / tMax : 0;
+
+  const prevFracRef = React.useRef(playheadFrac);
+  const wrapKeyRef = React.useRef(0);
+  if (playheadFrac < prevFracRef.current - 0.0001) {
+    // Wrapped from near-100% back to 0%; bump the key so the next render
+    // mounts a fresh element that doesn't animate the jump.
+    wrapKeyRef.current += 1;
+  }
+  prevFracRef.current = playheadFrac;
+
   const onDragOverRow = (e, chanNum, items) => {
     e.preventDefault();
     const d = dragRef.current;
@@ -65,7 +143,7 @@ function ChannelTimeline({
     const x = e.clientX - rect.left;
     let acc = 0;
     for (let i = 0; i < items.length; i++) {
-      const w = clipPxWidth(items[i]);
+      const w = clipPxWidth(items[i], pxPerSec);
       if (x < acc + w / 2) return i;
       acc += w;
     }
@@ -79,6 +157,7 @@ function ChannelTimeline({
     const items = playlists[chanNum] || [];
     const draggingNes = d.fileType === 'nes';
     const rowHasNes = items.some(i => i.fileType === 'nes');
+    // ROM cap of 1 per row — UI-side rule. Backend stays lenient.
     if (draggingNes && items.length > 0
         && !(d.source === 'timeline' && d.originChan === chanNum)) {
       dragRef.current = null;
@@ -91,19 +170,12 @@ function ChannelTimeline({
     const idx = computeDropIndex(e, e.currentTarget, items);
 
     if (d.source === 'pool') {
-      // Build the new entry. If the file isn't already in this channel's
-      // folder, ask the parent to move it before saving the playlist.
       onMovePoolFileToChannel(chanNum, d.poolItem, idx);
     } else {
-      // Move within timeline: rebuild entries on origin and target rows.
       onSavePlaylist(d.originChan, chanNum, d.originUid, idx);
     }
     dragRef.current = null;
   };
-
-  const totalPx = TIMELINE_MIN * PX_PER_MIN;
-  const ticks = [];
-  for (let m = 0; m <= TIMELINE_MIN; m += increment) ticks.push(m);
 
   return (
     <div className="tl-wrap">
@@ -112,90 +184,144 @@ function ChannelTimeline({
           <div className="tl-ruler">
             <div className="tl-ruler-corner" />
             <div className="tl-ruler-ticks" style={{ width: totalPx }}>
-              {ticks.map(m => {
-                const isHour = m % 60 === 0;
+              {ticks.map(s => {
+                const isMajor = (s % (tickStep * 4) === 0);
                 return (
-                  <div key={m} className={isHour ? 'tl-tick hour' : 'tl-tick'} style={{ left: m * PX_PER_MIN }}>
-                    <span className="tl-tick-label">{fmtClock(m)}</span>
+                  <div
+                    key={s}
+                    className={isMajor ? 'tl-tick hour' : 'tl-tick'}
+                    style={{ left: s * pxPerSec }}>
+                    <span className="tl-tick-label">{fmtTickLabel(s)}</span>
                   </div>
                 );
               })}
             </div>
           </div>
 
-          {channels.map(ch => {
-            const items = playlists[ch.num] || [];
-            const isNesRow = items.some(i => i.fileType === 'nes');
-            const drag = dragRef.current;
-            let dragInvalid = false;
-            if (drag && drag.fileType !== undefined) {
-              const draggingNes = drag.fileType === 'nes';
-              if (draggingNes && items.length > 0
-                  && !(drag.source === 'timeline' && drag.originChan === ch.num)) {
-                dragInvalid = true;
-              } else if (!draggingNes && isNesRow) {
-                dragInvalid = true;
+          <div className="tl-rows-wrap" style={{ position: 'relative' }}>
+            {channels.map(ch => {
+              const items = playlists[ch.num] || [];
+              const isNesRow = items.some(i => i.fileType === 'nes');
+              const drag = dragRef.current;
+              let dragInvalid = false;
+              if (drag && drag.fileType !== undefined) {
+                const draggingNes = drag.fileType === 'nes';
+                if (draggingNes && items.length > 0
+                    && !(drag.source === 'timeline' && drag.originChan === ch.num)) {
+                  dragInvalid = true;
+                } else if (!draggingNes && isNesRow) {
+                  dragInvalid = true;
+                }
               }
-            }
-            const pos = positionsByChannel ? positionsByChannel[ch.num] : null;
-            const playheadLeft = pos && typeof pos.loopPositionSec === 'number'
-              ? (pos.loopPositionSec / 60) * PX_PER_MIN
-              : null;
-            const isCurrent = ch.num === currentChannel;
-            const palette = (window.CHANNEL_COLORS || {})[ch.num];
-            return (
-              <div key={ch.num} className={`tl-row-wrap${isCurrent ? ' is-current' : ''}`}>
-                {renderChannelHeader && renderChannelHeader(ch.num)}
-                <div
-                  className={`tl-row${isNesRow ? ' nes-row' : ''}${dragInvalid ? ' drop-invalid' : ''}`}
-                  style={{ width: totalPx }}
-                  onDragOver={(e) => onDragOverRow(e, ch.num, items)}
-                  onDrop={(e) => onDropRow(e, ch.num)}>
-                  {items.map((entry, i) => {
-                    const isNesClip = entry.fileType === 'nes';
-                    const w = isNesClip ? totalPx : clipPxWidth(entry);
-                    return (
-                      <ClipBlock
-                        key={entry._uid || `${entry.filename}-${i}`}
-                        entry={entry}
-                        width={w}
-                        isNes={isNesClip}
-                        colorStripe={palette ? palette.stripe : null}
-                        colorBg={palette ? palette.bg : null}
-                        onDoubleClick={() => onSavePlaylist(ch.num, null, entry._uid, null)}
-                        onContextMenu={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          setClipMenu({
-                            x: e.clientX, y: e.clientY,
-                            entry, chan: ch.num,
-                          });
-                        }}
-                        onDragStart={(e) => {
-                          dragRef.current = {
-                            source: 'timeline',
-                            originChan: ch.num,
-                            originUid: entry._uid,
-                            fileType: entry.fileType,
-                          };
-                          e.dataTransfer.effectAllowed = 'move';
-                          e.dataTransfer.setData('text/plain', entry.filename);
-                        }}
-                      />
-                    );
-                  })}
-                  {items.length === 0 && (
-                    <div className="tl-empty">— DROP CLIPS HERE —</div>
-                  )}
-                  {playheadLeft !== null && (
-                    <div className="tl-playhead-row" style={{ left: playheadLeft }}>
-                      <div className="tl-playhead-line" />
-                    </div>
-                  )}
+              const isCurrent = ch.num === currentChannel;
+              const palette = (window.CHANNEL_COLORS || {})[ch.num];
+
+              const channelTotal = channelTotals[ch.num] || 0;
+              // Ghost iterations: how many copies of iteration 0 we tile
+              // after the real entries to fill the row up to tMax. ROM
+              // and empty rows have channelTotal=0 → no ghosts.
+              let ghostCount = 0;
+              let useGhostBg = false;
+              if (channelTotal > 0 && tMax > 0 && tMax > channelTotal) {
+                ghostCount = Math.ceil(tMax / channelTotal) - 1;
+                if (ghostCount > GHOST_CAP) {
+                  ghostCount = GHOST_CAP;
+                  useGhostBg = true;
+                }
+              }
+
+              return (
+                <div key={ch.num} className={`tl-row-wrap${isCurrent ? ' is-current' : ''}`}>
+                  {renderChannelHeader && renderChannelHeader(ch.num)}
+                  <div
+                    className={`tl-row${isNesRow ? ' nes-row' : ''}${dragInvalid ? ' drop-invalid' : ''}`}
+                    style={{ width: totalPx }}
+                    onDragOver={(e) => onDragOverRow(e, ch.num, items)}
+                    onDrop={(e) => onDropRow(e, ch.num)}>
+                    {items.map((entry, i) => {
+                      const isNesClip = entry.fileType === 'nes';
+                      const w = isNesClip ? totalPx : clipPxWidth(entry, pxPerSec);
+                      return (
+                        <ClipBlock
+                          key={entry._uid || `${entry.filename}-${i}`}
+                          entry={entry}
+                          width={w}
+                          isNes={isNesClip}
+                          colorStripe={palette ? palette.stripe : null}
+                          colorBg={palette ? palette.bg : null}
+                          onDoubleClick={() => onSavePlaylist(ch.num, null, entry._uid, null)}
+                          onContextMenu={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setClipMenu({
+                              x: e.clientX, y: e.clientY,
+                              entry, chan: ch.num,
+                            });
+                          }}
+                          onDragStart={(e) => {
+                            dragRef.current = {
+                              source: 'timeline',
+                              originChan: ch.num,
+                              originUid: entry._uid,
+                              fileType: entry.fileType,
+                            };
+                            e.dataTransfer.effectAllowed = 'move';
+                            e.dataTransfer.setData('text/plain', entry.filename);
+                          }}
+                        />
+                      );
+                    })}
+                    {/* Ghost iterations — read-only previews of upcoming
+                        loop repeats. data-ghost + pointer-events:none
+                        keeps drop logic unchanged (ghosts don't appear
+                        in entries[]). */}
+                    {Array.from({ length: ghostCount }).map((_, gi) => (
+                      <React.Fragment key={`ghost-${gi}`}>
+                        {items.map((entry, i) => {
+                          if (entry.fileType === 'nes') return null;
+                          const w = clipPxWidth(entry, pxPerSec);
+                          return (
+                            <ClipBlock
+                              key={`g${gi}-${entry._uid || `${entry.filename}-${i}`}`}
+                              entry={entry}
+                              width={w}
+                              isNes={false}
+                              colorStripe={palette ? palette.stripe : null}
+                              colorBg={palette ? palette.bg : null}
+                              isGhost
+                            />
+                          );
+                        })}
+                      </React.Fragment>
+                    ))}
+                    {useGhostBg && (
+                      // Tail of pathological short channels — render a
+                      // CSS-tiled stripe to denote continued repeats
+                      // without exploding the DOM.
+                      <div className="tl-ghost-tail" data-ghost="true"
+                           style={{ flex: '1 1 auto' }} />
+                    )}
+                    {items.length === 0 && (
+                      <div className="tl-empty">— DROP CLIPS HERE —</div>
+                    )}
+                  </div>
                 </div>
+              );
+            })}
+
+            {/* Single global playhead — spans all rows. Hidden when no
+                channel has content (tMax=0). Wrap-safe via key bump. */}
+            {tMax > 0 && (
+              <div
+                key={wrapKeyRef.current}
+                className="tl-playhead-global"
+                style={{
+                  left: HEADER_PX + playheadFrac * totalPx,
+                }}>
+                <div className="tl-playhead-global-line" />
               </div>
-            );
-          })}
+            )}
+          </div>
         </div>
       </div>
 
@@ -216,19 +342,20 @@ function ChannelTimeline({
   );
 }
 
-function clipPxWidth(entry) {
-  // Each repeat extends the visual width — the looper plays the clip N times.
-  const dur = (entry.durationSec || 0) * (entry.repeat || 1);
-  return Math.max(8, (dur / 60) * PX_PER_MIN);
+function clipPxWidth(entry, pxPerSec) {
+  // Each entry plays exactly once per loop iteration; repetition is
+  // encoded by adding the same filename twice. Width is just duration.
+  const dur = entry.durationSec || 0;
+  return Math.max(8, dur * pxPerSec);
 }
 
-function ClipBlock({ entry, width, isNes, colorStripe, colorBg, onDoubleClick, onContextMenu, onDragStart }) {
+function ClipBlock({ entry, width, isNes, colorStripe, colorBg, onDoubleClick, onContextMenu, onDragStart, isGhost }) {
   const tooSmall = width < 60;
   if (isNes) {
     return (
       <div
         className="clip clip-nes"
-        draggable
+        draggable={!isGhost}
         onDragStart={onDragStart}
         onDoubleClick={onDoubleClick}
         onContextMenu={onContextMenu}
@@ -245,6 +372,24 @@ function ClipBlock({ entry, width, isNes, colorStripe, colorBg, onDoubleClick, o
   const style = { width };
   if (colorStripe) style['--clip-stripe'] = colorStripe;
   if (colorBg) style['--clip-bg'] = colorBg;
+  if (isGhost) {
+    return (
+      <div
+        className="clip clip-ghost"
+        data-ghost="true"
+        style={style}
+        aria-hidden="true">
+        <div className="clip-stripe" />
+        <div className="clip-body">
+          {!tooSmall && <div className="clip-name">{entry.filename}</div>}
+          {!tooSmall && (
+            <div className="clip-dur">{fmtDur(entry.durationSec)}</div>
+          )}
+          {tooSmall && <div className="clip-mini">{fmtDur(entry.durationSec)}</div>}
+        </div>
+      </div>
+    );
+  }
   return (
     <div
       className="clip"
@@ -253,15 +398,12 @@ function ClipBlock({ entry, width, isNes, colorStripe, colorBg, onDoubleClick, o
       onDoubleClick={onDoubleClick}
       onContextMenu={onContextMenu}
       style={style}
-      title={`${entry.filename} — ${fmtDur(entry.durationSec)}${entry.repeat > 1 ? ` ×${entry.repeat}` : ''}`}>
+      title={`${entry.filename} — ${fmtDur(entry.durationSec)}`}>
       <div className="clip-stripe" />
       <div className="clip-body">
         {!tooSmall && <div className="clip-name">{entry.filename}</div>}
         {!tooSmall && (
-          <div className="clip-dur">
-            {fmtDur(entry.durationSec)}
-            {entry.repeat > 1 && <span className="clip-rpt"> ×{entry.repeat}</span>}
-          </div>
+          <div className="clip-dur">{fmtDur(entry.durationSec)}</div>
         )}
         {tooSmall && <div className="clip-mini">{fmtDur(entry.durationSec)}</div>}
       </div>
@@ -298,7 +440,6 @@ function ClipContextMenu({ x, y, entry, chan, onRemove, onClose }) {
       </div>
       <div className="pool-ctx-meta">
         CH {String(chan).padStart(2,'0')} · {entry.fileType === 'nes' ? 'NES ROM' : fmtDur(entry.durationSec)}
-        {entry.repeat > 1 && ` · ×${entry.repeat}`}
       </div>
       <div className="pool-ctx-sep" />
       <button className="pool-ctx-item danger" onClick={onRemove}>
@@ -317,5 +458,3 @@ function ClipContextMenu({ x, y, entry, chan, onRemove, onClose }) {
 }
 
 window.ChannelTimeline = ChannelTimeline;
-window.PX_PER_MIN = PX_PER_MIN;
-window.TIMELINE_MIN = TIMELINE_MIN;

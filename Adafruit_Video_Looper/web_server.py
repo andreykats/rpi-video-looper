@@ -421,7 +421,6 @@ def _build_state_snapshot(pm) -> dict:
         for ch_num, pl in bm._channel_playlists.items():
             entries = [{
                 'filename': m.filename,
-                'repeat': m.repeats,
                 'durationSec': m.duration,
                 'fileType': m.content_type,
             } for m in pl._movies]
@@ -469,12 +468,15 @@ def _build_state_snapshot(pm) -> dict:
             except (configparser.NoSectionError, configparser.NoOptionError):
                 cfg[section][k] = None
 
+    broadcast_start = pm._broadcast_start_time
     return {
         'currentChannel': pm._current_channel,
         'playbackStopped': pm._playback_stopped,
         'activePlayer': _active_kind(pm),
+        'broadcastStartTime': broadcast_start,
+        'broadcastElapsedSec': max(0.0, time.time() - broadcast_start),
         'broadcast': {
-            'startTime': pm._broadcast_start_time,
+            'startTime': broadcast_start,
             'channels': channels,
         },
         'mountRoots': _usb_roots(),
@@ -550,7 +552,6 @@ async def get_playlist_handler(request: Request):
         return JSONResponse({'channel': ch, 'entries': [], 'name': None})
     entries = [{
         'filename': m.filename,
-        'repeat': m.repeats,
         'durationSec': m.duration,
         'fileType': m.content_type,
     } for m in pl._movies]
@@ -630,12 +631,7 @@ async def post_playlist_handler(request: Request):
         if fn not in existing:
             skipped.append(fn)
             continue
-        rpt = raw.get('repeat', 1)
-        try:
-            rpt = max(1, int(rpt))
-        except (TypeError, ValueError):
-            rpt = 1
-        cleaned.append({'filename': fn, 'repeat': rpt})
+        cleaned.append({'filename': fn})
 
     try:
         playlist_io.write_playlist_json(channel_dir, cleaned, **name_kw)
@@ -749,8 +745,7 @@ def _rewrite_playlist_after_filename_change(
         new_ents = [e for e in ents if e['filename'] != old_name]
     else:
         new_ents = [
-            {'filename': new_name if e['filename'] == old_name else e['filename'],
-             'repeat': e['repeat']}
+            {'filename': new_name if e['filename'] == old_name else e['filename']}
             for e in ents
         ]
     if new_ents == ents:
@@ -1005,6 +1000,25 @@ async def post_reboot_handler(request: Request):
     return JSONResponse({'ok': True}, status_code=202)
 
 
+async def post_broadcast_reset_handler(request: Request):
+    """Snap T0 to now and re-launch the current channel from offset 0.
+
+    Returns 409 in legacy/sequential mode (no broadcast manager).
+    """
+    pm = request.app.state.pm
+    broker: Broker = request.app.state.broker
+    T0 = pm.reset_broadcast()
+    if T0 is None:
+        return JSONResponse(
+            {'ok': False, 'error': 'broadcast-mode-disabled'},
+            status_code=409,
+        )
+    log.info('broadcast reset via web UI; new T0=%.3f', T0)
+    broker.publish({'type': 'broadcast.reset', 'ts': time.time(),
+                    'startTime': T0})
+    return JSONResponse({'ok': True, 'startTime': T0})
+
+
 def _schedule_command(cmd, delay_s: float = 0.25):
     def _run():
         time.sleep(delay_s)
@@ -1125,6 +1139,7 @@ async def _emit_positions(pm, broker: Broker):
         'type': 'state.positions',
         'ts': time.time(),
         'channels': channels_data,
+        'broadcastElapsedSec': max(0.0, time.time() - pm._broadcast_start_time),
     })
 
 
@@ -1154,6 +1169,7 @@ def create_app(pm) -> Starlette:
         Route('/api/config', get_config_handler, methods=['GET']),
         Route('/api/config', post_config_handler, methods=['POST']),
         Route('/api/system/reboot', post_reboot_handler, methods=['POST']),
+        Route('/api/broadcast/reset', post_broadcast_reset_handler, methods=['POST']),
         WebSocketRoute('/ws', ws_endpoint),
     ]
     if os.path.isdir(WEBUI_DIR):

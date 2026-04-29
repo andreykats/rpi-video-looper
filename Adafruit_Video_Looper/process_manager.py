@@ -23,12 +23,19 @@ from . import playlist_io
 log = logging.getLogger('looper.main')
 wlog = logging.getLogger('looper.worker')
 
+# Fallback video shown on empty channels. Lives inside the package so a
+# `pip install .` (and therefore the deploy workflow) carries it; resolved
+# via __file__ so it works whether the looper runs from the source tree
+# or from site-packages.
+DEFAULT_VIDEO_PATH = os.path.join(os.path.dirname(__file__),
+                                  'assets', 'default.mp4')
+
 
 @dataclass
 class ChannelIntent:
     channel: int
     previous_channel: Optional[int]
-    reason: str  # 'startup' | 'channel'
+    reason: str  # 'startup' | 'channel' | 'reset'
 
 
 @dataclass
@@ -182,8 +189,6 @@ class ProcessManager:
 
         for x in os.listdir(path):
             if x[0] != '.' and re.search(r'\.({0})$'.format(self._extensions), x, flags=re.IGNORECASE):
-                repeatsetting = re.search(r'_repeat_([0-9]*)x', x, flags=re.IGNORECASE)
-                repeat = repeatsetting.group(1) if repeatsetting else 1
                 basename, extension = os.path.splitext(x)
 
                 file_path = '{0}/{1}'.format(path.rstrip('/'), x)
@@ -195,7 +200,7 @@ class ProcessManager:
                 else:
                     duration = self._get_video_duration(file_path)
 
-                movie = Movie(file_path, basename, repeat, duration)
+                movie = Movie(file_path, basename, 1, duration)
                 movies.append(movie)
 
                 if duration > 0:
@@ -308,6 +313,26 @@ class ProcessManager:
         self._playlist_intent_slot.publish(
             PlaylistIntent(channel=channel, playlist=playlist)
         )
+
+    def reset_broadcast(self) -> Optional[float]:
+        """Set T0 = now, route a reset intent through the worker. Returns
+        the new T0, or None when broadcast mode is disabled (legacy /
+        sequential mode). T0 itself is a single float assignment — atomic
+        under CPython GIL.
+        """
+        if self._broadcast_manager is None:
+            return None
+        T0 = time.time()
+        self._broadcast_start_time = T0
+        self._broadcast_manager._broadcast_start_time = T0
+        # Publish to the channel-intent slot (not eov) so this wins over
+        # any in-flight eov intent — the worker drains channel-intent
+        # first.
+        self._channel_intent_slot.publish(
+            ChannelIntent(channel=self._current_channel,
+                          previous_channel=None, reason='reset')
+        )
+        return T0
 
     # Reconcile window — after a launch, watch for newer publishes for
     # this long. Subsequent intents during the window switch the player
@@ -422,8 +447,8 @@ class ProcessManager:
             self._current_channel = channel
             movie, seek_offset = self._broadcast_manager.calculate_broadcast_position(channel)
             if movie is None:
-                wlog.info('channel %d empty', channel)
-                self._playback_stopped = True
+                wlog.info('handle channel=%d empty default-video', channel)
+                self._play_default_video()
                 return
             wlog.info('channel %d playing %s', channel, movie.filename)
             self._play_movie(movie, seek_offset)
@@ -458,7 +483,8 @@ class ProcessManager:
             intent.channel
         )
         if movie is None:
-            self._playback_stopped = True
+            wlog.info('handle channel=%d empty default-video', intent.channel)
+            self._play_default_video()
             return
         self._play_movie(movie, seek_offset)
         self._playback_stopped = False
@@ -472,7 +498,9 @@ class ProcessManager:
                 intent.channel
             )
             if movie is None:
-                self._playback_stopped = True
+                wlog.info('handle eov channel=%d empty default-video',
+                          intent.channel)
+                self._play_default_video()
                 return
             self._play_movie(movie, seek_offset)
             self._playback_stopped = False
@@ -499,6 +527,23 @@ class ProcessManager:
             player.play(movie, vol=self._sound_vol)
 
         self._active_player = player
+
+    def _play_default_video(self):
+        """Play the package-bundled default video on a loop.
+
+        Used when the current channel has no entries — keeps mpv on screen
+        with a fallback loop instead of leaving the previous channel's
+        last frame visible. mpv must own DRM, so an active RetroArch is
+        stopped first.
+        """
+        video = self._players['video']
+        if self._active_player is not None and self._active_player is not video:
+            self._active_player.stop(block=False)
+
+        default_movie = Movie(DEFAULT_VIDEO_PATH, 'default', 1, 0)
+        video.play(default_movie, loop=-1, vol=self._sound_vol)
+        self._active_player = video
+        self._playback_stopped = False
 
     def run(self):
         """Main program loop.
@@ -552,12 +597,15 @@ class ProcessManager:
                 if not any_playing and not self._playback_stopped:
                     self._publish_eov_intent()
 
-                # Check for file reader changes (USB insert/remove)
+                # Check for file reader changes (USB insert/remove). Note
+                # that the broadcast clock T0 is NOT reset here — under
+                # the shared-broadcast-clock model, T0 is anchored once
+                # at process start and reset only on explicit user action
+                # via /api/broadcast/reset.
                 if self._reader.is_changed() and not self._playback_stopped:
                     log.info('media changed, rebuilding playlists')
                     self._stop_all_players()
 
-                    self._broadcast_start_time = time.time()
                     self._playlist = self._build_playlist()
 
                     # Trigger a fresh launch via the worker.
