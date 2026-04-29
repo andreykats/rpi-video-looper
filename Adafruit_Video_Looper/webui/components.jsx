@@ -565,7 +565,8 @@ function FolderContextMenu({ x, y, node, fileCount, usedCount, onRename, onDelet
 }
 
 // ─────────── Settings Modal — looper INI editor ───────────
-function SettingsModal({ open, onClose, config, storage, onSave, onReboot, restarting }) {
+function SettingsModal({ open, onClose, config, storage, onSave, onReboot, restarting,
+                         timelineScale, onTimelineScaleChange }) {
   const [draft, setDraft] = React.useState(() => deepClone(config));
   React.useEffect(() => { setDraft(deepClone(config)); }, [config, open]);
 
@@ -679,6 +680,28 @@ function SettingsModal({ open, onClose, config, storage, onSave, onReboot, resta
                 <div className="seg">
                   <button className={!isBool(get('logging','relay_debug'))?'on':''} onClick={()=>set('logging','relay_debug',toBool(false))}>OFF</button>
                   <button className={isBool(get('logging','relay_debug'))?'on':''} onClick={()=>set('logging','relay_debug',toBool(true))}>ON</button>
+                </div>
+              </label>
+            </div>
+          </section>
+
+          {/* Browser-side preference: applies immediately, not part of the draft/APPLY flow */}
+          <section className="cfg-sec">
+            <div className="cfg-sec-hd">
+              <EngravedLabel size="sm">USER INTERFACE</EngravedLabel>
+            </div>
+            <div className="cfg-grid">
+              <label className="cfg-row">
+                <span>TIMELINE SCALE</span>
+                <div className="seg">
+                  {(window.TIMELINE_SCALE_OPTIONS || [5,15,30,60]).map(m => (
+                    <button
+                      key={m}
+                      className={timelineScale === m ? 'on' : ''}
+                      onClick={() => onTimelineScaleChange && onTimelineScaleChange(m)}>
+                      {m === 60 ? '1H' : `${m}M`}
+                    </button>
+                  ))}
                 </div>
               </label>
             </div>

@@ -13,20 +13,11 @@
 // Each entry plays exactly once per loop iteration; users drag a clip
 // in twice to repeat it.
 
-const ROW_WIDTH_PX = 2880;        // visual width of a full tMax row
+const PX_PER_MAJOR_TICK = 200;    // visual density: each major tick spans 200px
+const MIN_ROW_WIDTH_PX  = 600;    // minimum row width when content is shorter than one tick
 const HEADER_PX = 180;            // must match CSS .tl-chan-cell width
 const TMAX_FALLBACK_S = 60;       // when no channel has content (rare)
-
-function rulerStepFor(tMax) {
-  // Pick an interval that yields somewhere around 6–24 ticks across the
-  // visible range, in human-friendly units.
-  if (tMax <= 60)    return 5;       // every 5 s
-  if (tMax <= 300)   return 30;      // every 30 s
-  if (tMax <= 1800)  return 60;      // every 1 min
-  if (tMax <= 7200)  return 300;     // every 5 min
-  if (tMax <= 21600) return 1800;    // every 30 min
-  return 3600;                       // every 1 hour
-}
+const TIMELINE_SCALE_FALLBACK = 15;   // minutes per major tick if prop is missing
 
 function fmtTickLabel(sec) {
   sec = Math.max(0, Math.floor(sec));
@@ -42,14 +33,16 @@ function ChannelTimeline({
   channels, playlists, positionsByChannel, currentChannel,
   broadcastElapsedSec,
   mountRoot, onSavePlaylist, onMovePoolFileToChannel, renderChannelHeader,
+  timelineScale, onTimelineScaleChange,
 }) {
   const dragRef = React.useRef(null);
   const [clipMenu, setClipMenu] = React.useState(null);
+  const [rulerMenu, setRulerMenu] = React.useState(null);
 
   React.useEffect(() => {
-    if (!clipMenu) return;
-    const close = () => setClipMenu(null);
-    const onKey = (e) => { if (e.key === 'Escape') setClipMenu(null); };
+    if (!clipMenu && !rulerMenu) return;
+    const close = () => { setClipMenu(null); setRulerMenu(null); };
+    const onKey = (e) => { if (e.key === 'Escape') close(); };
     window.addEventListener('mousedown', close);
     window.addEventListener('scroll', close, true);
     window.addEventListener('keydown', onKey);
@@ -58,7 +51,7 @@ function ChannelTimeline({
       window.removeEventListener('scroll', close, true);
       window.removeEventListener('keydown', onKey);
     };
-  }, [clipMenu]);
+  }, [clipMenu, rulerMenu]);
 
   // Pool drag bridge — VideoPoolSidebar fires an onDragStart that calls
   // window.__poolDragBridge with the file payload, which we stash here.
@@ -88,11 +81,16 @@ function ChannelTimeline({
   }, [channels, channelTotals]);
 
   const effectiveTMax = tMax > 0 ? tMax : TMAX_FALLBACK_S;
-  const pxPerSec = ROW_WIDTH_PX / effectiveTMax;
-  const totalPx = ROW_WIDTH_PX;
+  // User-selected zoom: each major tick spans `timelineScale` minutes
+  // and a fixed PX_PER_MAJOR_TICK on screen. Block widths derive from
+  // pxPerSec so they stay time-accurate at every scale.
+  const scaleMin = (typeof timelineScale === 'number' && timelineScale > 0)
+    ? timelineScale : TIMELINE_SCALE_FALLBACK;
+  const tickStep = scaleMin * 60;                          // seconds between ticks
+  const pxPerSec = PX_PER_MAJOR_TICK / tickStep;
+  const totalPx = Math.max(MIN_ROW_WIDTH_PX, effectiveTMax * pxPerSec);
 
-  // Ruler ticks.
-  const tickStep = rulerStepFor(effectiveTMax);
+  // Ruler ticks — one tick per chosen interval, plus a final cap at tMax.
   const ticks = React.useMemo(() => {
     const out = [];
     for (let s = 0; s <= effectiveTMax; s += tickStep) out.push(s);
@@ -180,18 +178,21 @@ function ChannelTimeline({
         <div className="tl-inner" style={{ width: HEADER_PX + totalPx + 80 }}>
           <div className="tl-ruler">
             <div className="tl-ruler-corner" />
-            <div className="tl-ruler-ticks" style={{ width: totalPx }}>
-              {ticks.map(s => {
-                const isMajor = (s % (tickStep * 4) === 0);
-                return (
-                  <div
-                    key={s}
-                    className={isMajor ? 'tl-tick hour' : 'tl-tick'}
-                    style={{ left: s * pxPerSec }}>
-                    <span className="tl-tick-label">{fmtTickLabel(s)}</span>
-                  </div>
-                );
-              })}
+            <div
+              className="tl-ruler-ticks"
+              style={{ width: totalPx }}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setRulerMenu({ x: e.clientX, y: e.clientY });
+              }}>
+              {ticks.map(s => (
+                <div
+                  key={s}
+                  className="tl-tick hour"
+                  style={{ left: s * pxPerSec }}>
+                  <span className="tl-tick-label">{fmtTickLabel(s)}</span>
+                </div>
+              ))}
             </div>
           </div>
 
@@ -291,6 +292,17 @@ function ChannelTimeline({
           onClose={() => setClipMenu(null)}
         />
       )}
+
+      {rulerMenu && (
+        <RulerContextMenu
+          x={rulerMenu.x}
+          y={rulerMenu.y}
+          value={scaleMin}
+          options={window.TIMELINE_SCALE_OPTIONS || [5, 15, 30, 60]}
+          onPick={(m) => onTimelineScaleChange && onTimelineScaleChange(m)}
+          onClose={() => setRulerMenu(null)}
+        />
+      )}
     </div>
   );
 }
@@ -388,6 +400,50 @@ function ClipContextMenu({ x, y, entry, chan, onRemove, onClose }) {
         <span>CANCEL</span>
         <span className="pool-ctx-hint">ESC</span>
       </button>
+    </div>
+  );
+}
+
+function RulerContextMenu({ x, y, value, options, onPick, onClose }) {
+  const ref = React.useRef(null);
+  const [pos, setPos] = React.useState({ left: x, top: y });
+
+  React.useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    let left = x, top = y;
+    if (left + rect.width + 4 > window.innerWidth) left = window.innerWidth - rect.width - 4;
+    if (top + rect.height + 4 > window.innerHeight) top = window.innerHeight - rect.height - 4;
+    if (left < 4) left = 4;
+    if (top < 4) top = 4;
+    setPos({ left, top });
+  }, [x, y]);
+
+  return (
+    <div
+      ref={ref}
+      className="pool-ctx tl-scale-ctx"
+      style={{ left: pos.left, top: pos.top }}
+      onMouseDown={(e) => e.stopPropagation()}
+      onContextMenu={(e) => e.preventDefault()}>
+      <div className="pool-ctx-hd">
+        <span className="pool-ctx-icon">▸</span>
+        <span className="pool-ctx-title">TIMELINE SCALE</span>
+      </div>
+      <div className="pool-ctx-sep" />
+      {options.map(m => {
+        const active = m === value;
+        return (
+          <button
+            key={m}
+            className={`pool-ctx-item${active ? ' on' : ''}`}
+            onClick={() => { onPick(m); onClose(); }}>
+            <span className="pool-ctx-key">{active ? '●' : ' '}</span>
+            <span>{m === 60 ? '1 HOUR' : `${m} MIN`}</span>
+          </button>
+        );
+      })}
     </div>
   );
 }

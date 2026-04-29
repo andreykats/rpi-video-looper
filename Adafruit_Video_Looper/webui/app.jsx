@@ -3,11 +3,14 @@ const { useState, useEffect, useRef, useMemo } = React;
 
 const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
   "phosphor": "amber",
-  "increment": 15,
   "era": "tan"
 }/*EDITMODE-END*/;
 
 const PHOSPHOR = { amber: '#ffb347', green: '#7fff7f', white: '#e8e8e8' };
+
+const TIMELINE_SCALE_OPTIONS = [5, 15, 30, 60];
+const TIMELINE_SCALE_DEFAULT = 15;
+window.TIMELINE_SCALE_OPTIONS = TIMELINE_SCALE_OPTIONS;
 
 let UID_COUNTER = 1;
 const newUid = (prefix) => `${prefix || 'u'}_${UID_COUNTER++}`;
@@ -113,6 +116,14 @@ function App() {
   });
   const [resizing, setResizing] = useState(false);
   useEffect(() => { localStorage.setItem('crt_pool_w', String(poolW)); }, [poolW]);
+
+  const [timelineScale, setTimelineScale] = useState(() => {
+    const v = parseInt(localStorage.getItem('crt_timeline_scale') || '', 10);
+    return TIMELINE_SCALE_OPTIONS.includes(v) ? v : TIMELINE_SCALE_DEFAULT;
+  });
+  useEffect(() => {
+    localStorage.setItem('crt_timeline_scale', String(timelineScale));
+  }, [timelineScale]);
   const onResizeDown = (e) => {
     e.preventDefault();
     setResizing(true);
@@ -625,7 +636,8 @@ function App() {
             <ChannelTimeline
               channels={CHANNELS}
               playlists={playlists}
-              increment={t.increment}
+              timelineScale={timelineScale}
+              onTimelineScaleChange={setTimelineScale}
               positionsByChannel={positionsByChannel}
               currentChannel={currentChannel}
               mountRoot={mountRoot}
@@ -656,6 +668,8 @@ function App() {
         onSave={(c) => { setSettingsOpen(false); handleSaveConfig(c); }}
         onReboot={() => { setSettingsOpen(false); handleReboot(); }}
         restarting={restarting}
+        timelineScale={timelineScale}
+        onTimelineScaleChange={setTimelineScale}
       />
 
       <LogDrawer logs={logs} open={logOpen} />
@@ -681,18 +695,6 @@ function App() {
                 { value: 'graphite', label: 'GRAPH' },
               ]}
               onChange={(v) => setTweak('era', v)}
-            />
-            <TweakSection label="Timeline" />
-            <TweakRadio
-              label="Time Increment"
-              value={t.increment}
-              options={[
-                { value: 5, label: '5m' },
-                { value: 15, label: '15m' },
-                { value: 30, label: '30m' },
-                { value: 60, label: '1h' },
-              ]}
-              onChange={(v) => setTweak('increment', v)}
             />
           </TweaksPanel>
         );
