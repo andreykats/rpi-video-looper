@@ -73,6 +73,7 @@ function App() {
 
   const [pool, setPool] = useState(() => flattenPool(initial.pool));
   const [poolTreeRaw, setPoolTreeRaw] = useState(initial.pool);
+  const [uploads, setUploads] = useState([]); // [{id, name, sizeBytes, progressPct, status}]
   // Broadcast clock — anchored to the server's start time. We tick it
   // locally in 1 s steps for the +HH:MM:SS display; state.positions
   // envelopes (every 500 ms) and the broadcast.reset event re-anchor the
@@ -251,9 +252,17 @@ function App() {
       }),
       ws.subscribe('pool.changed', () => {
         Promise.all([API.getPool(), API.getStorage()]).then(([p, s]) => {
-          setPool(flattenPool(p));
+          const flat = flattenPool(p);
+          setPool(flat);
           setPoolTreeRaw(p);
           setStorage(s);
+          // Drop any done ghosts whose names now exist in the real pool —
+          // the swap is what makes the ghost vanish at the same instant
+          // the real entry shows up, with no flash.
+          const realNames = new Set(flat.map(v => v.name));
+          setUploads(prev => prev.filter(
+            u => !(u.status === 'done' && realNames.has(u.name))
+          ));
         }).catch(() => {});
       }),
       ws.subscribe('log.line', (env) => {
@@ -395,6 +404,42 @@ function App() {
   };
 
   // ─── Pool file ops ───
+  const handleUploadFiles = async (files) => {
+    if (!files || files.length === 0) return;
+    // Queue ghosts up front so the user sees the whole batch immediately.
+    const queued = files.map(f => ({
+      id: newUid('upload'),
+      name: f.name,
+      sizeBytes: f.size,
+      progressPct: 0,
+      status: 'uploading',
+      file: f,
+    }));
+    setUploads(prev => [...prev, ...queued.map(({ file: _, ...rest }) => rest)]);
+    // Sequential: serial USB writes are saner than parallel, and the
+    // percentages stay honest.
+    for (const item of queued) {
+      try {
+        await API.uploadFile(item.file, {
+          onProgress: (pct) => {
+            setUploads(prev => prev.map(u =>
+              u.id === item.id ? { ...u, progressPct: pct } : u
+            ));
+          },
+        });
+        setUploads(prev => prev.map(u =>
+          u.id === item.id ? { ...u, progressPct: 1, status: 'done' } : u
+        ));
+        // The pool.changed broker event will arrive on its own and the
+        // subscriber drops the done ghost when the real file appears.
+      } catch (e) {
+        setUploads(prev => prev.filter(u => u.id !== item.id));
+        const detail = e.detail && e.detail.error ? e.detail.error : e.message;
+        window.alert(`Upload failed (${item.name}): ${detail}`);
+      }
+    }
+  };
+
   const handleRenameFile = async (id, newName) => {
     try { await API.renameFile(id, newName); }
     catch (e) {
@@ -608,12 +653,14 @@ function App() {
       <main className="chassis-main" style={{ '--pool-w': poolW + 'px' }}>
         <VideoPoolSidebar
           pool={pool}
+          uploads={uploads}
           onDragStart={handlePoolDragStart}
           usedIds={usedIds}
           onRename={handleRenameFile}
           onDelete={handleDeleteFile}
           onRenameFolder={handleRenameFolder}
           onDeleteFolder={handleDeleteFolder}
+          onUpload={handleUploadFiles}
         />
 
         <div

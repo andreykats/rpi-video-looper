@@ -534,6 +534,15 @@ input, textarea, [contenteditable="true"], .log-drawer-body {
   flex-shrink: 0;
 }
 
+/* In-flight upload ghost row */
+.tree-file.uploading {
+  opacity: 0.55;
+  cursor: default;
+}
+.tree-file.uploading .pool-dur {
+  font-variant-numeric: tabular-nums;
+}
+
 /* Inline rename input */
 .pool-rename-input {
   flex: 1;

@@ -871,6 +871,70 @@ async def post_file_move_handler(request: Request):
     })
 
 
+async def post_file_upload_handler(request: Request):
+    """Stream a raw request body to a new file at the root of the first
+    USB drive. Filename comes from `?name=` so the body stays pure bytes
+    — no multipart parser, no memory buffering, works for arbitrarily
+    large videos.
+    """
+    broker: Broker = request.app.state.broker
+    name = (request.query_params.get('name') or '').strip()
+    if not name or '/' in name or name in ('.', '..') or name.startswith('.'):
+        return JSONResponse({'ok': False, 'error': 'invalid-name'}, status_code=400)
+    ext = os.path.splitext(name)[1].lower().lstrip('.')
+    if ext not in VIDEO_EXTS:
+        return JSONResponse(
+            {'ok': False, 'error': 'bad-extension', 'detail': ext or '(none)'},
+            status_code=400,
+        )
+
+    roots = _usb_roots()
+    if not roots:
+        return JSONResponse({'ok': False, 'error': 'no-usb'}, status_code=503)
+    root = roots[0]
+    final_path = os.path.join(root, name)
+    if os.path.exists(final_path):
+        return JSONResponse({'ok': False, 'error': 'name-exists'}, status_code=409)
+
+    tmp = tempfile.NamedTemporaryFile(
+        dir=root, prefix='.upload-', suffix='.tmp', delete=False,
+    )
+    tmp_path = tmp.name
+    written = 0
+    try:
+        try:
+            async for chunk in request.stream():
+                if chunk:
+                    tmp.write(chunk)
+                    written += len(chunk)
+        finally:
+            tmp.close()
+        os.rename(tmp_path, final_path)
+    except OSError as e:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        log.exception('upload failed for %s: %s', name, e)
+        return JSONResponse(
+            {'ok': False, 'error': 'write-failed', 'detail': str(e)},
+            status_code=500,
+        )
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+    broker.publish({'type': 'pool.changed', 'ts': time.time()})
+    return JSONResponse({
+        'ok': True,
+        'path': final_path,
+        'sizeBytes': written,
+    })
+
+
 async def post_folder_rename_handler(request: Request):
     broker: Broker = request.app.state.broker
     try:
@@ -1167,6 +1231,7 @@ def create_app(pm) -> Starlette:
         Route('/api/file/rename', post_file_rename_handler, methods=['POST']),
         Route('/api/file/delete', post_file_delete_handler, methods=['POST']),
         Route('/api/file/move', post_file_move_handler, methods=['POST']),
+        Route('/api/file/upload', post_file_upload_handler, methods=['POST']),
         Route('/api/folder/rename', post_folder_rename_handler, methods=['POST']),
         Route('/api/folder/delete', post_folder_delete_handler, methods=['POST']),
         Route('/api/config', get_config_handler, methods=['GET']),

@@ -44,6 +44,34 @@ const API = {
   renameFile: (path, newName) => apiPost('/api/file/rename', { path, newName }),
   deleteFile: (path) => apiPost('/api/file/delete', { path }),
   moveFile: (path, targetDir) => apiPost('/api/file/move', { path, targetDir }),
+  // Raw-body upload. fetch() can't report upload progress, so XHR.
+  uploadFile: (file, opts) => new Promise((resolve, reject) => {
+    const onProgress = opts && opts.onProgress;
+    const signal = opts && opts.signal;
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `/api/file/upload?name=${encodeURIComponent(file.name)}`);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total);
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try { resolve(JSON.parse(xhr.responseText)); }
+        catch { resolve({ ok: true }); }
+      } else {
+        let detail;
+        try { detail = JSON.parse(xhr.responseText); }
+        catch { detail = xhr.responseText; }
+        const err = new Error(`/api/file/upload → ${xhr.status}`);
+        err.status = xhr.status;
+        err.detail = detail;
+        reject(err);
+      }
+    };
+    xhr.onerror = () => reject(new Error('upload network error'));
+    xhr.onabort = () => reject(new Error('upload aborted'));
+    if (signal) signal.addEventListener('abort', () => xhr.abort());
+    xhr.send(file);
+  }),
   renameFolder: (path, newName) => apiPost('/api/folder/rename', { path, newName }),
   deleteFolder: (path) => apiPost('/api/folder/delete', { path }),
   getConfig: () => apiGet('/api/config'),

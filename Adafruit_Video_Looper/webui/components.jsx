@@ -84,13 +84,15 @@ function LED({ on, color = 'red', label }) {
 }
 
 // ─────────── Video Pool Sidebar ───────────
-function VideoPoolSidebar({ pool, onDragStart, usedIds, onRename, onDelete, onRenameFolder, onDeleteFolder }) {
+function VideoPoolSidebar({ pool, uploads, onDragStart, usedIds, onRename, onDelete, onRenameFolder, onDeleteFolder, onUpload }) {
   const [hideUsed, setHideUsed] = React.useState(false);
   const [sortBy, setSortBy] = React.useState('name'); // name | size
 
   const [menu, setMenu] = React.useState(null);
   const [renaming, setRenaming] = React.useState(null);
   const [renameValue, setRenameValue] = React.useState('');
+  const fileInputRef = React.useRef(null);
+  const ghostUploads = uploads || [];
 
   React.useEffect(() => {
     if (!menu) return;
@@ -277,6 +279,25 @@ function VideoPoolSidebar({ pool, onDragStart, usedIds, onRename, onDelete, onRe
       </div>
       <div className="pool-toolbar">
         <div className="pool-tb-group">
+          <button
+            className="pool-tb-btn"
+            onClick={() => fileInputRef.current && fileInputRef.current.click()}
+            title="Upload files to the USB drive">
+            <span className="pool-tb-icon">⤴</span>
+            <span>UPLOAD</span>
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept=".avi,.mov,.mkv,.mp4,.m4v,.webm,.flv,.ts,.nes,.fds,.nsf,video/*"
+            style={{ display: 'none' }}
+            onChange={(e) => {
+              const files = Array.from(e.target.files || []);
+              if (onUpload && files.length) onUpload(files);
+              e.target.value = '';
+            }}
+          />
           {(() => {
             const anyExpanded = expanded.size > 1;
             return (
@@ -314,6 +335,20 @@ function VideoPoolSidebar({ pool, onDragStart, usedIds, onRename, onDelete, onRe
       </div>
 
       <div className="pool-list">
+        {ghostUploads.map(u => (
+          <div
+            key={u.id}
+            className={`tree-row tree-file pool-item${u.status === 'uploading' ? ' uploading' : ''}`}
+            style={{ paddingLeft: 8 }}>
+            <span className="tree-twist tree-twist-leaf">·</span>
+            <div className="pool-name">{u.name}</div>
+            <div className="pool-dur">
+              {u.status === 'uploading'
+                ? `${Math.round((u.progressPct || 0) * 100)}%`
+                : fmtBytes(u.sizeBytes)}
+            </div>
+          </div>
+        ))}
         {tree.childList.map(c => renderNode(c, 0))}
         {/* Files at the root mount level */}
         {tree.files && tree.files.map(v => {
