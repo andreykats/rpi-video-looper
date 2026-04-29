@@ -254,6 +254,10 @@ class ProcessManager:
             return None
 
         manager = BroadcastChannelManager(self._broadcast_start_time)
+        default_duration = self._get_video_duration(DEFAULT_VIDEO_PATH)
+        manager.set_default_movie(
+            Movie(DEFAULT_VIDEO_PATH, 'default', 1, default_duration)
+        )
 
         log.info('building broadcast channels')
 
@@ -445,13 +449,15 @@ class ProcessManager:
 
         if self._broadcast_manager is not None:
             self._current_channel = channel
-            movie, seek_offset = self._broadcast_manager.calculate_broadcast_position(channel)
-            if movie is None:
+            selection = self._broadcast_manager.calculate_broadcast_position(channel)
+            if selection.movie is None:
                 wlog.info('handle channel=%d empty default-video', channel)
                 self._play_default_video()
                 return
-            wlog.info('channel %d playing %s', channel, movie.filename)
-            self._play_movie(movie, seek_offset)
+            wlog.info('channel %d playing %s%s', channel,
+                      selection.movie.filename,
+                      ' hidden-filler' if selection.hidden else '')
+            self._play_selection(selection)
             self._playback_stopped = False
         else:
             video_index = channel - 1
@@ -479,14 +485,14 @@ class ProcessManager:
                   intent.channel, intent.playlist.length())
         if not replay or intent.channel != self._current_channel:
             return
-        movie, seek_offset = self._broadcast_manager.calculate_broadcast_position(
+        selection = self._broadcast_manager.calculate_broadcast_position(
             intent.channel
         )
-        if movie is None:
+        if selection.movie is None:
             wlog.info('handle channel=%d empty default-video', intent.channel)
             self._play_default_video()
             return
-        self._play_movie(movie, seek_offset)
+        self._play_selection(selection)
         self._playback_stopped = False
 
     def _handle_eov_intent(self, intent):
@@ -494,15 +500,15 @@ class ProcessManager:
         by the main loop noticing no active player rather than the encoder."""
         wlog.info('handle eov channel=%d', intent.channel)
         if self._broadcast_manager is not None:
-            movie, seek_offset = self._broadcast_manager.calculate_broadcast_position(
+            selection = self._broadcast_manager.calculate_broadcast_position(
                 intent.channel
             )
-            if movie is None:
+            if selection.movie is None:
                 wlog.info('handle eov channel=%d empty default-video',
                           intent.channel)
                 self._play_default_video()
                 return
-            self._play_movie(movie, seek_offset)
+            self._play_selection(selection)
             self._playback_stopped = False
         elif self._playlist is not None:
             movie = self._playlist.get_next(self._is_random)
@@ -510,7 +516,16 @@ class ProcessManager:
                 self._play_movie(movie)
                 self._playback_stopped = False
 
-    def _play_movie(self, movie, seek_offset=None):
+    def _play_selection(self, selection):
+        """Play a broadcast selection, including hidden filler bounds."""
+        self._play_movie(
+            selection.movie,
+            seek_offset=selection.seek_offset,
+            play_length=selection.play_length,
+            loop=selection.loop,
+        )
+
+    def _play_movie(self, movie, seek_offset=None, play_length=None, loop=None):
         """Play a movie with the appropriate player."""
         player = self._get_player_for_movie(movie)
 
@@ -521,8 +536,11 @@ class ProcessManager:
             self._active_player.stop(block=False)
 
         # Only pass seek_offset for video content
-        if movie.content_type == 'video' and seek_offset:
-            player.play(movie, vol=self._sound_vol, seek_position=seek_offset)
+        if movie.content_type == 'video':
+            player.play(movie, vol=self._sound_vol,
+                        seek_position=seek_offset,
+                        play_length=play_length,
+                        loop=loop)
         else:
             player.play(movie, vol=self._sound_vol)
 

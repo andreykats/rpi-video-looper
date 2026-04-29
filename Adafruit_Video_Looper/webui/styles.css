@@ -1708,7 +1708,7 @@ body {
   letter-spacing: 0.15em;
 }
 
-/* tl-row is the flexbox containing real entries + ghost iterations.
+/* tl-row is the flexbox containing real entries.
    position:relative anchors the empty-state placeholder. */
 .tl-row { position: relative; }
 
@@ -1743,27 +1743,6 @@ body {
   box-shadow: 0 0 8px rgba(255, 60, 60, 0.7);
 }
 
-/* Ghost iterations — read-only previews of upcoming loop repeats. */
-.clip.clip-ghost {
-  opacity: 0.35;
-  cursor: default;
-  filter: saturate(0.6);
-  pointer-events: none;
-}
-.tl-ghost-tail {
-  align-self: stretch;
-  opacity: 0.35;
-  pointer-events: none;
-  background-image: repeating-linear-gradient(
-    135deg,
-    rgba(255, 179, 71, 0.2) 0,
-    rgba(255, 179, 71, 0.2) 6px,
-    rgba(255, 179, 71, 0.05) 6px,
-    rgba(255, 179, 71, 0.05) 12px
-  );
-}
-
 /* Kiosk-style: hide scrollbars everywhere; scrolling still works via wheel/drag/keys */
 * { scrollbar-width: none; }
 *::-webkit-scrollbar { width: 0; height: 0; display: none; }
-

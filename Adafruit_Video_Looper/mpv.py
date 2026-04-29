@@ -28,6 +28,10 @@ _IDLE_DEBOUNCE_TICKS = 2
 log = logging.getLogger('looper.mpv')
 
 
+def _fmt_seconds(value):
+    return ('{0:.3f}'.format(float(value))).rstrip('0').rstrip('.')
+
+
 def _blank_console():
     """Blank the console to hide TTY during player transitions."""
     try:
@@ -70,12 +74,21 @@ class MPVPlayer:
         self._process = None
         self._ipc_sock = None
         self._play_requested_time = 0  # Prevent duplicate plays during startup
+        self._startup_grace_until = 0
         # Counter for consecutive idle-active=True observations from the
         # short-lived IPC query. Reset on any non-True observation. See
         # _IDLE_DEBOUNCE_TICKS and is_playing().
         self._idle_observation_count = 0
         self._load_config(config)
         _ensure_blank_image()
+
+    def _mark_play_requested(self, play_length=None):
+        now = time.time()
+        self._play_requested_time = now
+        grace = 2.0
+        if play_length is not None and play_length > 0:
+            grace = min(grace, max(0.1, float(play_length) / 2.0))
+        self._startup_grace_until = now + grace
 
     def _load_config(self, config):
         """Load configuration from INI file."""
@@ -206,7 +219,8 @@ class MPVPlayer:
             self._ipc_sock = None  # Mark socket as dead
             return False
 
-    def _load_via_ipc(self, movie, seek_position=None, loop=None):
+    def _load_via_ipc(self, movie, seek_position=None, loop=None,
+                      play_length=None):
         """Load new video via IPC without restarting mpv.
 
         `loop=-1` requests an infinite per-file loop (used for the empty-
@@ -243,7 +257,9 @@ class MPVPlayer:
                 'loop-file': 'inf' if (loop is not None and loop <= -1) else 'no',
             }
             if seek_position and seek_position > 0:
-                options['start'] = str(int(seek_position))
+                options['start'] = _fmt_seconds(seek_position)
+            if play_length is not None and play_length > 0:
+                options['length'] = _fmt_seconds(play_length)
             success = self._send_ipc_command_verified(
                 'loadfile', movie.target, 'replace', -1, options
             )
@@ -272,7 +288,8 @@ class MPVPlayer:
         process.poll()
         return process.returncode is None
 
-    def play(self, movie, loop=None, vol=0, seek_position=None):
+    def play(self, movie, loop=None, vol=0, seek_position=None,
+             play_length=None):
         """Play the provided movie file, optionally looping it repeatedly.
 
         Args:
@@ -282,6 +299,8 @@ class MPVPlayer:
                 duplicate entries in the playlist instead.
             vol: Volume in millibels (omxplayer compatibility, converted to percentage)
             seek_position: Seek to this position in seconds (for broadcast mode)
+            play_length: Stop after this many seconds (used for virtual
+                hidden filler segments).
         """
         # Try IPC if mpv is alive (even when idle after a natural EOF —
         # is_playing() correctly reports False there, but the process is
@@ -291,14 +310,16 @@ class MPVPlayer:
             # idle observations so the next is_playing() poll doesn't
             # carry stale debounce state from the prior clip's EOF.
             self._idle_observation_count = 0
-            self._play_requested_time = time.time()
+            self._mark_play_requested(play_length)
             if self._ipc_sock:
-                if self._load_via_ipc(movie, seek_position, loop=loop):
+                if self._load_via_ipc(movie, seek_position, loop=loop,
+                                      play_length=play_length):
                     return  # Success - no need to restart
             else:
                 # Socket not ready - try to connect (process may have created it late)
                 if self._connect_ipc(timeout=0.5):
-                    if self._load_via_ipc(movie, seek_position, loop=loop):
+                    if self._load_via_ipc(movie, seek_position, loop=loop,
+                                          play_length=play_length):
                         return  # Success after reconnect
                 # Socket still not available - fall through to kill and restart
                 log.info('ipc socket unavailable, restarting player')
@@ -307,8 +328,8 @@ class MPVPlayer:
         self.stop()
         self._cleanup_socket()
 
-        # Mark play as requested to prevent duplicate calls during startup
-        self._play_requested_time = time.time()
+        # Mark play as requested to prevent duplicate calls during startup.
+        self._mark_play_requested(play_length)
 
         # Build command arguments
         args = ['mpv']
@@ -349,7 +370,10 @@ class MPVPlayer:
 
         # Handle seek position (broadcast mode)
         if seek_position is not None and seek_position > 0:
-            args.extend(['--start={}'.format(int(seek_position))])
+            args.extend(['--start={}'.format(_fmt_seconds(seek_position))])
+
+        if play_length is not None and play_length > 0:
+            args.extend(['--length={}'.format(_fmt_seconds(play_length))])
 
         # Handle volume (convert millibels to percentage)
         volume_pct = self._convert_volume(vol)
@@ -385,9 +409,10 @@ class MPVPlayer:
             close_fds=True,
             env=env,
         )
-        log.info('start pid=%d file=%s seek=%s',
+        log.info('start pid=%d file=%s seek=%s length=%s',
                  self._process.pid, movie.filename,
-                 int(seek_position) if seek_position else 0)
+                 _fmt_seconds(seek_position) if seek_position else 0,
+                 _fmt_seconds(play_length) if play_length else 0)
 
         # IPC socket is connected lazily on first use (see _load_via_ipc /
         # reconnect path). Skipping the synchronous wait here keeps the worker
@@ -479,7 +504,7 @@ class MPVPlayer:
         on the second tick.
         """
         # During startup, return True to prevent duplicate play calls.
-        if time.time() - self._play_requested_time < 2.0:
+        if time.time() < self._startup_grace_until:
             self._idle_observation_count = 0
             return True
 
@@ -512,6 +537,7 @@ class MPVPlayer:
         reason = 'kill'
         # Reset play request time so new plays can happen immediately
         self._play_requested_time = 0
+        self._startup_grace_until = 0
 
         # Blank console to hide TTY during transition
         _blank_console()

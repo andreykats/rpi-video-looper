@@ -1,8 +1,8 @@
 // ─────────── Timeline ───────────
 // All channel rows share one horizontal time axis whose width represents
 // `tMax = max(channel total_duration over all channels)`. Channels
-// shorter than tMax render ghost iterations (faded duplicates) of their
-// real entries to fill the remaining width, denoting upcoming repeats.
+// shorter than tMax show blank tail space; runtime-only hidden default
+// filler is not rendered in the editor timeline.
 // A single global playhead at `(elapsed % tMax) / tMax * row_width` runs
 // across all rows so the user can read down to see what's playing on
 // each channel at any instant.
@@ -16,9 +16,6 @@
 const ROW_WIDTH_PX = 2880;        // visual width of a full tMax row
 const HEADER_PX = 180;            // must match CSS .tl-chan-cell width
 const TMAX_FALLBACK_S = 60;       // when no channel has content (rare)
-const GHOST_CAP = 30;             // hard cap on ghost iterations per row
-                                  // — anything past this tiles via CSS
-                                  // background to avoid pathological DOM
 
 function rulerStepFor(tMax) {
   // Pick an interval that yields somewhere around 6–24 ticks across the
@@ -216,20 +213,6 @@ function ChannelTimeline({
               const isCurrent = ch.num === currentChannel;
               const palette = (window.CHANNEL_COLORS || {})[ch.num];
 
-              const channelTotal = channelTotals[ch.num] || 0;
-              // Ghost iterations: how many copies of iteration 0 we tile
-              // after the real entries to fill the row up to tMax. ROM
-              // and empty rows have channelTotal=0 → no ghosts.
-              let ghostCount = 0;
-              let useGhostBg = false;
-              if (channelTotal > 0 && tMax > 0 && tMax > channelTotal) {
-                ghostCount = Math.ceil(tMax / channelTotal) - 1;
-                if (ghostCount > GHOST_CAP) {
-                  ghostCount = GHOST_CAP;
-                  useGhostBg = true;
-                }
-              }
-
               return (
                 <div key={ch.num} className={`tl-row-wrap${isCurrent ? ' is-current' : ''}`}>
                   {renderChannelHeader && renderChannelHeader(ch.num)}
@@ -271,36 +254,6 @@ function ChannelTimeline({
                         />
                       );
                     })}
-                    {/* Ghost iterations — read-only previews of upcoming
-                        loop repeats. data-ghost + pointer-events:none
-                        keeps drop logic unchanged (ghosts don't appear
-                        in entries[]). */}
-                    {Array.from({ length: ghostCount }).map((_, gi) => (
-                      <React.Fragment key={`ghost-${gi}`}>
-                        {items.map((entry, i) => {
-                          if (entry.fileType === 'nes') return null;
-                          const w = clipPxWidth(entry, pxPerSec);
-                          return (
-                            <ClipBlock
-                              key={`g${gi}-${entry._uid || `${entry.filename}-${i}`}`}
-                              entry={entry}
-                              width={w}
-                              isNes={false}
-                              colorStripe={palette ? palette.stripe : null}
-                              colorBg={palette ? palette.bg : null}
-                              isGhost
-                            />
-                          );
-                        })}
-                      </React.Fragment>
-                    ))}
-                    {useGhostBg && (
-                      // Tail of pathological short channels — render a
-                      // CSS-tiled stripe to denote continued repeats
-                      // without exploding the DOM.
-                      <div className="tl-ghost-tail" data-ghost="true"
-                           style={{ flex: '1 1 auto' }} />
-                    )}
                     {items.length === 0 && (
                       <div className="tl-empty">— DROP CLIPS HERE —</div>
                     )}
@@ -349,13 +302,13 @@ function clipPxWidth(entry, pxPerSec) {
   return Math.max(8, dur * pxPerSec);
 }
 
-function ClipBlock({ entry, width, isNes, colorStripe, colorBg, onDoubleClick, onContextMenu, onDragStart, isGhost }) {
+function ClipBlock({ entry, width, isNes, colorStripe, colorBg, onDoubleClick, onContextMenu, onDragStart }) {
   const tooSmall = width < 60;
   if (isNes) {
     return (
       <div
         className="clip clip-nes"
-        draggable={!isGhost}
+        draggable
         onDragStart={onDragStart}
         onDoubleClick={onDoubleClick}
         onContextMenu={onContextMenu}
@@ -372,24 +325,6 @@ function ClipBlock({ entry, width, isNes, colorStripe, colorBg, onDoubleClick, o
   const style = { width };
   if (colorStripe) style['--clip-stripe'] = colorStripe;
   if (colorBg) style['--clip-bg'] = colorBg;
-  if (isGhost) {
-    return (
-      <div
-        className="clip clip-ghost"
-        data-ghost="true"
-        style={style}
-        aria-hidden="true">
-        <div className="clip-stripe" />
-        <div className="clip-body">
-          {!tooSmall && <div className="clip-name">{entry.filename}</div>}
-          {!tooSmall && (
-            <div className="clip-dur">{fmtDur(entry.durationSec)}</div>
-          )}
-          {tooSmall && <div className="clip-mini">{fmtDur(entry.durationSec)}</div>}
-        </div>
-      </div>
-    );
-  }
   return (
     <div
       className="clip"

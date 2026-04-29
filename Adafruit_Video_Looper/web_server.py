@@ -432,8 +432,9 @@ def _build_state_snapshot(pm) -> dict:
             }
             loop_total = bm._channel_durations.get(ch_num, 0)
             if pl.length() > 0:
-                movie, seek_offset = bm.calculate_broadcast_position(ch_num)
-                if movie is not None:
+                selection = bm.calculate_broadcast_position(ch_num)
+                movie = selection.movie
+                if movie is not None and not selection.hidden:
                     cumulative = 0
                     for m in pl._movies:
                         if m is movie:
@@ -441,9 +442,9 @@ def _build_state_snapshot(pm) -> dict:
                         cumulative += m.duration
                     cur = {
                         'filename': movie.filename,
-                        'positionSec': float(seek_offset),
+                        'positionSec': float(selection.seek_offset),
                         'durationSec': movie.duration,
-                        'loopPositionSec': cumulative + float(seek_offset),
+                        'loopPositionSec': cumulative + float(selection.seek_offset),
                     }
             ch_dir = channel_paths.get(ch_num, '')
             ch_name = None
@@ -494,8 +495,9 @@ def _is_currently_playing(pm, target: Path) -> bool:
     pl = bm._channel_playlists.get(ch)
     if pl is None or pl.length() == 0:
         return False
-    movie, _ = bm.calculate_broadcast_position(ch)
-    if movie is None:
+    selection = bm.calculate_broadcast_position(ch)
+    movie = selection.movie
+    if movie is None or selection.hidden:
         return False
     try:
         return Path(movie.target).resolve(strict=False) == target
@@ -1115,8 +1117,9 @@ async def _emit_positions(pm, broker: Broker):
     for ch_num, pl in bm._channel_playlists.items():
         if pl is None or pl.length() == 0:
             continue
-        movie, seek_offset = bm.calculate_broadcast_position(ch_num)
-        if movie is None:
+        selection = bm.calculate_broadcast_position(ch_num)
+        movie = selection.movie
+        if movie is None or selection.hidden:
             continue
         loop_total = bm._channel_durations.get(ch_num, 0)
         cumulative = 0
@@ -1124,7 +1127,7 @@ async def _emit_positions(pm, broker: Broker):
             if m is movie:
                 break
             cumulative += m.duration
-        seek = float(seek_offset)
+        seek = float(selection.seek_offset)
         if (ch_num == active_ch and mpv_pos is not None
                 and movie.content_type == 'video'):
             seek = mpv_pos

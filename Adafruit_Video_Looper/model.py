@@ -3,6 +3,7 @@
 # License: GNU GPLv2, see LICENSE.txt
 import os
 import random
+from dataclasses import dataclass
 from os.path import basename
 from typing import Optional, Union
 
@@ -11,7 +12,9 @@ random.seed()
 class Movie:
     """Representation of a movie"""
 
-    def __init__(self, target:str , title: Optional[str] = None, repeats: int = 1, duration: float = 0):
+    def __init__(self, target:str , title: Optional[str] = None,
+                 repeats: int = 1, duration: float = 0,
+                 hidden: bool = False):
         """Create a playlist from the provided list of movies."""
         self.target = target
         self.filename = basename(target)
@@ -19,6 +22,7 @@ class Movie:
         self.repeats = int(repeats)
         self.playcount = 0
         self.duration = float(duration)  # Duration in seconds for broadcast mode
+        self.hidden = bool(hidden)
         self.content_type = self._detect_content_type()
 
     def _detect_content_type(self):
@@ -143,21 +147,44 @@ class Playlist:
             movie.clear_playcount()
 
 
+@dataclass
+class BroadcastSelection:
+    movie: Optional[Movie]
+    seek_offset: float = 0
+    play_length: Optional[float] = None
+    loop: Optional[int] = None
+    hidden: bool = False
+    loop_position: Optional[float] = None
+
+
 class BroadcastChannelManager:
     """Manages broadcast TV-style channels with synchronized playback."""
 
     def __init__(self, broadcast_start_time, num_channels=13):
         self._channel_playlists = {}  # Dict: channel_num -> Playlist
-        self._channel_durations = {}  # Dict: channel_num -> total_duration
+        self._channel_durations = {}  # Dict: channel_num -> real total_duration
+        self._channel_playback_schedules = {}  # Dict: channel_num -> Playlist
+        self._channel_effective_durations = {}  # Includes hidden fillers
         self._broadcast_start_time = broadcast_start_time  # time.time() when app started
         self._default_playlist = None
+        self._default_movie = None
+        self._default_duration = 0
+        self._broadcast_block_duration = 0
+
+    def set_default_movie(self, movie):
+        """Set runtime-only filler movie for short video channels."""
+        self._default_movie = movie
+        self._default_duration = movie.duration if movie is not None else 0
+        self._rebuild_playback_schedules()
 
     def set_channel_playlist(self, channel_num, playlist):
-        """Associate a playlist with a channel number (1-13)."""
+        """Associate a user-visible playlist with a channel number (1-13)."""
         self._channel_playlists[channel_num] = playlist
-        # Calculate total duration for this channel
+        # Real user duration only; hidden default fillers are kept in the
+        # separate playback schedule and never exposed to the web UI.
         total_duration = sum(movie.duration for movie in playlist._movies)
         self._channel_durations[channel_num] = total_duration
+        self._rebuild_playback_schedules()
 
     def set_default_playlist(self, playlist):
         """Set playlist to use for empty/missing channels."""
@@ -171,26 +198,75 @@ class BroadcastChannelManager:
                 return playlist
         return self._default_playlist if self._default_playlist else Playlist([])
 
+    def get_playback_playlist(self, channel_num):
+        """Get the runtime playback schedule for a channel."""
+        playlist = self._channel_playback_schedules.get(channel_num)
+        if playlist is not None and playlist.length() > 0:
+            return playlist
+        return self._default_playlist if self._default_playlist else Playlist([])
+
+    def _rebuild_playback_schedules(self):
+        """Build hidden default-fill schedules from real playlist durations.
+
+        `T_max` is computed from real user content only. Short video
+        channels get hidden default.mp4 segments appended to their runtime
+        schedule, but their persisted/user-facing playlist stays unchanged.
+        """
+        self._broadcast_block_duration = max(
+            self._channel_durations.values(), default=0
+        )
+        self._channel_playback_schedules = {}
+        self._channel_effective_durations = {}
+
+        for channel_num, playlist in self._channel_playlists.items():
+            real_duration = self._channel_durations.get(channel_num, 0)
+            movies = list(playlist._movies)
+
+            if (real_duration > 0
+                    and self._broadcast_block_duration > real_duration
+                    and self._default_movie is not None
+                    and self._default_duration > 0):
+                remaining = self._broadcast_block_duration - real_duration
+                while remaining > 0.001:
+                    segment_duration = min(self._default_duration, remaining)
+                    movies.append(Movie(
+                        self._default_movie.target,
+                        self._default_movie.title,
+                        1,
+                        segment_duration,
+                        hidden=True,
+                    ))
+                    remaining -= segment_duration
+
+            self._channel_playback_schedules[channel_num] = Playlist(movies)
+            self._channel_effective_durations[channel_num] = sum(
+                movie.duration for movie in movies
+            )
+
     def calculate_broadcast_position(self, channel_num):
         """Calculate what should be playing on this channel at current broadcast time.
 
         Returns:
-            (movie, seek_offset) tuple, or (None, 0) if channel empty
+            BroadcastSelection, with movie=None if channel empty.
         """
         import time
 
-        playlist = self.get_playlist(channel_num)
+        playlist = self.get_playback_playlist(channel_num)
         if playlist.length() == 0:
-            return (None, 0)
+            return BroadcastSelection(None, 0)
 
         # Get elapsed broadcast time
         broadcast_time = time.time() - self._broadcast_start_time
 
         # Get total loop duration for this channel
-        total_duration = self._channel_durations.get(channel_num, 0)
+        total_duration = self._channel_effective_durations.get(channel_num, 0)
         if total_duration == 0:
             # Fallback if durations not set
-            return (playlist._movies[0], 0)
+            movie = playlist._movies[0]
+            return BroadcastSelection(
+                movie, 0, hidden=getattr(movie, 'hidden', False),
+                loop_position=0
+            )
 
         # Calculate position within the loop
         position_in_loop = broadcast_time % total_duration
@@ -201,11 +277,24 @@ class BroadcastChannelManager:
             if cumulative_time + movie.duration > position_in_loop:
                 # Found the video!
                 seek_offset = position_in_loop - cumulative_time
-                return (movie, seek_offset)
+                hidden = getattr(movie, 'hidden', False)
+                play_length = None
+                if hidden:
+                    # Hidden filler segments are virtual playlist entries.
+                    # Limit playback to the remaining segment so the next
+                    # EOV lands exactly on the next hidden/full/real entry.
+                    play_length = max(0.001, movie.duration - seek_offset)
+                return BroadcastSelection(
+                    movie, seek_offset, play_length=play_length,
+                    hidden=hidden, loop_position=position_in_loop
+                )
             cumulative_time += movie.duration
 
         # Fallback (shouldn't reach here)
-        return (playlist._movies[0], 0)
+        movie = playlist._movies[0]
+        return BroadcastSelection(
+            movie, 0, hidden=getattr(movie, 'hidden', False), loop_position=0
+        )
 
     def has_channel(self, channel_num):
         """Check if channel has videos."""
