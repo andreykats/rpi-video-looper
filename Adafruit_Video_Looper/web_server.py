@@ -167,6 +167,33 @@ def _channel_dir_for(ch: int) -> Optional[str]:
     return None
 
 
+def _primary_usb_root() -> Optional[str]:
+    """Pick the USB root that holds the channel content. Some sticks
+    expose two partitions (e.g. a small EFI + a large data volume); we
+    want uploads to land on the data volume. Prefer any root that has
+    at least one numbered channel folder; fall back to the root with
+    the most free space; finally, the first root.
+    """
+    roots = _usb_roots()
+    if not roots:
+        return None
+    for root in roots:
+        for ch in range(1, 14):
+            if os.path.isdir(os.path.join(root, str(ch))):
+                return root
+    best = None
+    best_free = -1
+    for root in roots:
+        try:
+            free = shutil.disk_usage(root).free
+        except OSError:
+            continue
+        if free > best_free:
+            best_free = free
+            best = root
+    return best or roots[0]
+
+
 def _channel_for_dir(path: Path) -> Optional[int]:
     """If `path` is a numbered channel folder under a USB root, return the channel num."""
     for r in _usb_roots_resolved():
@@ -888,10 +915,9 @@ async def post_file_upload_handler(request: Request):
             status_code=400,
         )
 
-    roots = _usb_roots()
-    if not roots:
+    root = _primary_usb_root()
+    if root is None:
         return JSONResponse({'ok': False, 'error': 'no-usb'}, status_code=503)
-    root = roots[0]
     final_path = os.path.join(root, name)
     if os.path.exists(final_path):
         return JSONResponse({'ok': False, 'error': 'name-exists'}, status_code=409)
