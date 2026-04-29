@@ -274,32 +274,31 @@ function VideoPoolSidebar({ pool, uploads, uploadExtensions, onDragStart, usedId
     <>
     <aside className="pool">
       <div className="pool-hd">
-        <EngravedLabel size="sm">USB SOURCE</EngravedLabel>
+        <button
+          className="pool-tb-btn pool-hd-upload"
+          onClick={() => fileInputRef.current && fileInputRef.current.click()}
+          title="Upload files to the USB drive">
+          <span className="pool-tb-icon">⤴</span>
+          <span>UPLOAD</span>
+        </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          accept={(uploadExtensions && uploadExtensions.length)
+            ? uploadExtensions.map(e => '.' + e).join(',')
+            : ''}
+          style={{ display: 'none' }}
+          onChange={(e) => {
+            const files = Array.from(e.target.files || []);
+            if (onUpload && files.length) onUpload(files);
+            e.target.value = '';
+          }}
+        />
         <span className="pool-count">{filtered.length} FILES</span>
       </div>
       <div className="pool-toolbar">
         <div className="pool-tb-group">
-          <button
-            className="pool-tb-btn"
-            onClick={() => fileInputRef.current && fileInputRef.current.click()}
-            title="Upload files to the USB drive">
-            <span className="pool-tb-icon">⤴</span>
-            <span>UPLOAD</span>
-          </button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            accept={(uploadExtensions && uploadExtensions.length)
-              ? uploadExtensions.map(e => '.' + e).join(',')
-              : ''}
-            style={{ display: 'none' }}
-            onChange={(e) => {
-              const files = Array.from(e.target.files || []);
-              if (onUpload && files.length) onUpload(files);
-              e.target.value = '';
-            }}
-          />
           {(() => {
             const anyExpanded = expanded.size > 1;
             return (
