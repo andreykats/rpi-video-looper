@@ -35,7 +35,7 @@ DEFAULT_VIDEO_PATH = os.path.join(os.path.dirname(__file__),
 class ChannelIntent:
     channel: int
     previous_channel: Optional[int]
-    reason: str  # 'startup' | 'channel' | 'reset'
+    reason: str  # 'startup' | 'channel' | 'reset' | 'seek'
 
 
 @dataclass
@@ -360,6 +360,23 @@ class ProcessManager:
         self._channel_intent_slot.publish(
             ChannelIntent(channel=self._current_channel,
                           previous_channel=None, reason='reset')
+        )
+        return T0
+
+    def seek_broadcast(self, elapsed_sec: float) -> Optional[float]:
+        """Shift T0 so the broadcast clock reads `elapsed_sec` now, and
+        re-launch the current channel from the new offset. Returns the
+        new T0, or None when broadcast mode is disabled.
+        """
+        if self._broadcast_manager is None:
+            return None
+        elapsed_sec = max(0.0, float(elapsed_sec))
+        T0 = time.time() - elapsed_sec
+        self._broadcast_start_time = T0
+        self._broadcast_manager._broadcast_start_time = T0
+        self._channel_intent_slot.publish(
+            ChannelIntent(channel=self._current_channel,
+                          previous_channel=None, reason='seek')
         )
         return T0
 

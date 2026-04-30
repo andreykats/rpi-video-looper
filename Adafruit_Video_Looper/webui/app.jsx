@@ -238,6 +238,18 @@ function App() {
         });
         setBroadcastNowSec(0);
       }),
+      ws.subscribe('broadcast.seek', (env) => {
+        // Re-anchor to the seek target so the playhead doesn't snap
+        // back to the pre-seek position before the next state.positions
+        // envelope arrives.
+        const e = (typeof env.elapsedSec === 'number' && isFinite(env.elapsedSec))
+          ? Math.max(0, env.elapsedSec) : 0;
+        setBroadcastBaseline({
+          elapsedSec: e,
+          receivedAt: performance.now(),
+        });
+        setBroadcastNowSec(e);
+      }),
       ws.subscribe('playlist.changed', (env) => {
         API.getPlaylist(env.channel).then(({ entries, name }) => {
           setPlaylists(p => ({
@@ -527,6 +539,24 @@ function App() {
     }
   };
 
+  const handleSeekBroadcast = async (elapsedSec) => {
+    const target = Math.max(0, Number(elapsedSec) || 0);
+    // Optimistic re-anchor: the broadcast.seek WS event will repeat
+    // this once the server commits, but doing it here keeps the
+    // playhead from snapping back during the round-trip.
+    setBroadcastBaseline({
+      elapsedSec: target,
+      receivedAt: performance.now(),
+    });
+    setBroadcastNowSec(target);
+    try {
+      await API.seekBroadcast(target);
+    } catch (e) {
+      const detail = e.detail && e.detail.error ? e.detail.error : e.message;
+      window.alert('Seek failed: ' + detail);
+    }
+  };
+
   useEffect(() => {
     const handler = (e) => {
       const tg = e.target;
@@ -688,6 +718,7 @@ function App() {
               onSavePlaylist={handleSavePlaylist}
               onMovePoolFileToChannel={handleAddPoolItem}
               renderChannelHeader={renderChannelHeader}
+              onSeek={handleSeekBroadcast}
             />
           </div>
 

@@ -78,6 +78,7 @@ const API = {
   saveConfig: (cfg) => apiPost('/api/config', cfg),
   reboot: () => apiPost('/api/system/reboot', {}),
   resetBroadcast: () => apiPost('/api/broadcast/reset', {}),
+  seekBroadcast: (elapsedSec) => apiPost('/api/broadcast/seek', { elapsedSec }),
 };
 
 window.API = API;

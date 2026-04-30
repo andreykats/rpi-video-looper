@@ -35,11 +35,16 @@ function ChannelTimeline({
   channels, playlists, positionsByChannel, currentChannel,
   broadcastElapsedSec,
   mountRoot, onSavePlaylist, onMovePoolFileToChannel, renderChannelHeader,
-  timelineScale, onTimelineScaleChange,
+  timelineScale, onTimelineScaleChange, onSeek,
 }) {
   const dragRef = React.useRef(null);
   const [clipMenu, setClipMenu] = React.useState(null);
   const [rulerMenu, setRulerMenu] = React.useState(null);
+  // Active scrub drag of the playhead grabber. Null when idle.
+  // { rect: DOMRect, frac: 0..1 } — `rect` is the .tl-ruler-ticks bbox
+  // captured at mousedown; `frac` is the live cursor fraction.
+  const [scrub, setScrub] = React.useState(null);
+  const ticksRef = React.useRef(null);
 
   React.useEffect(() => {
     if (!clipMenu && !rulerMenu) return;
@@ -105,16 +110,54 @@ function ChannelTimeline({
   const elapsedSafe = (typeof broadcastElapsedSec === 'number'
                        && isFinite(broadcastElapsedSec))
     ? Math.max(0, broadcastElapsedSec) : 0;
-  const playheadFrac = tMax > 0 ? (elapsedSafe % tMax) / tMax : 0;
+  const clockFrac = tMax > 0 ? (elapsedSafe % tMax) / tMax : 0;
+  // While scrubbing, render at the cursor's fraction; otherwise track
+  // the broadcast clock. Suppresses the wrap-key bump mid-drag.
+  const playheadFrac = scrub ? scrub.frac : clockFrac;
 
   const prevFracRef = React.useRef(playheadFrac);
   const wrapKeyRef = React.useRef(0);
-  if (playheadFrac < prevFracRef.current - 0.0001) {
+  if (!scrub && clockFrac < prevFracRef.current - 0.0001) {
     // Wrapped from near-100% back to 0%; bump the key so the next render
     // mounts a fresh element that doesn't animate the jump.
     wrapKeyRef.current += 1;
   }
   prevFracRef.current = playheadFrac;
+
+  // Scrub drag: grabber-driven seek of the broadcast clock. Mousedown
+  // arms a drag; mousemove updates frac (re-reading the ruler bbox so
+  // mid-drag scrolls don't skew the cursor mapping); mouseup commits
+  // via onSeek and clears state.
+  const onGrabberMouseDown = (e) => {
+    if (tMax <= 0 || !ticksRef.current) return;
+    if (e.button !== 0) return;
+    e.preventDefault();
+    setScrub({ frac: clockFrac });
+  };
+
+  React.useEffect(() => {
+    if (!scrub) return;
+    const onMove = (ev) => {
+      const el = ticksRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const w = rect.width || 1;
+      const frac = Math.max(0, Math.min(1, (ev.clientX - rect.left) / w));
+      setScrub(s => (s ? { ...s, frac } : s));
+    };
+    const onUp = () => {
+      setScrub(s => {
+        if (s && onSeek) onSeek(s.frac * tMax);
+        return null;
+      });
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+  }, [scrub, tMax, onSeek]);
 
   const onDragOverRow = (e, chanNum, items) => {
     e.preventDefault();
@@ -181,6 +224,7 @@ function ChannelTimeline({
           <div className="tl-ruler">
             <div className="tl-ruler-corner" />
             <div
+              ref={ticksRef}
               className="tl-ruler-ticks"
               style={{ width: totalPx }}
               onContextMenu={(e) => {
@@ -195,6 +239,14 @@ function ChannelTimeline({
                   <span className="tl-tick-label">{fmtTickLabel(s)}</span>
                 </div>
               ))}
+              {tMax > 0 && (
+                <div
+                  className={`tl-grabber${scrub ? ' is-scrubbing' : ''}`}
+                  style={{ left: playheadFrac * totalPx }}
+                  onMouseDown={onGrabberMouseDown}
+                  title="DRAG TO SCRUB BROADCAST CLOCK"
+                />
+              )}
             </div>
           </div>
 
@@ -269,7 +321,7 @@ function ChannelTimeline({
             {tMax > 0 && (
               <div
                 key={wrapKeyRef.current}
-                className="tl-playhead-global"
+                className={`tl-playhead-global${scrub ? ' is-scrubbing' : ''}`}
                 style={{
                   left: HEADER_PX + playheadFrac * totalPx,
                 }}>

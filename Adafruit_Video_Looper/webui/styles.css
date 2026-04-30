@@ -1768,6 +1768,35 @@ input, textarea, [contenteditable="true"], .log-drawer-body {
   background: #ff3030;
   box-shadow: 0 0 8px rgba(255, 60, 60, 0.7);
 }
+.tl-playhead-global.is-scrubbing { transition: none; }
+
+/* Draggable handle for the broadcast playhead. Lives in the ruler row
+   above .tl-playhead-global; commits a seek on mouseup. */
+.tl-grabber {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 16px;
+  margin-left: -8px;
+  cursor: grab;
+  z-index: 4;
+  pointer-events: auto;
+}
+.tl-grabber::before {
+  content: '';
+  position: absolute;
+  top: 1px;
+  left: 50%;
+  margin-left: -7px;
+  width: 0; height: 0;
+  border-left: 7px solid transparent;
+  border-right: 7px solid transparent;
+  border-top: 10px solid #ff3030;
+  filter: drop-shadow(0 0 4px rgba(255, 60, 60, 0.85));
+}
+.tl-grabber:hover::before { border-top-color: #ff6060; }
+.tl-grabber.is-scrubbing { cursor: grabbing; }
+.tl-grabber.is-scrubbing::before { border-top-color: #ff8080; }
 
 /* Kiosk-style: hide scrollbars everywhere; scrolling still works via wheel/drag/keys */
 * { scrollbar-width: none; }

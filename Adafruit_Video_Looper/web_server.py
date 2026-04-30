@@ -1315,6 +1315,35 @@ async def post_broadcast_reset_handler(request: Request):
     return JSONResponse({'ok': True, 'startTime': T0})
 
 
+async def post_broadcast_seek_handler(request: Request):
+    """Shift T0 so the broadcast clock reads `elapsedSec` now, and
+    re-launch the current channel from the new offset.
+    """
+    pm = request.app.state.pm
+    broker: Broker = request.app.state.broker
+    try:
+        body = await request.json()
+        elapsed = float(body.get('elapsedSec', 0.0))
+    except (ValueError, TypeError, json.JSONDecodeError):
+        return JSONResponse({'ok': False, 'error': 'bad-request'},
+                            status_code=400)
+    if not (0.0 <= elapsed < 86400 * 365):
+        return JSONResponse({'ok': False, 'error': 'out-of-range'},
+                            status_code=400)
+    T0 = pm.seek_broadcast(elapsed)
+    if T0 is None:
+        return JSONResponse(
+            {'ok': False, 'error': 'broadcast-mode-disabled'},
+            status_code=409,
+        )
+    log.info('broadcast seek via web UI; elapsedSec=%.3f new T0=%.3f',
+             elapsed, T0)
+    broker.publish({'type': 'broadcast.seek', 'ts': time.time(),
+                    'startTime': T0, 'elapsedSec': elapsed})
+    return JSONResponse({'ok': True, 'startTime': T0,
+                         'elapsedSec': elapsed})
+
+
 def _schedule_command(cmd, delay_s: float = 0.25):
     def _run():
         time.sleep(delay_s)
@@ -1468,6 +1497,7 @@ def create_app(pm) -> Starlette:
         Route('/api/config', post_config_handler, methods=['POST']),
         Route('/api/system/reboot', post_reboot_handler, methods=['POST']),
         Route('/api/broadcast/reset', post_broadcast_reset_handler, methods=['POST']),
+        Route('/api/broadcast/seek', post_broadcast_seek_handler, methods=['POST']),
         WebSocketRoute('/ws', ws_endpoint),
     ]
     if os.path.isdir(WEBUI_DIR):
