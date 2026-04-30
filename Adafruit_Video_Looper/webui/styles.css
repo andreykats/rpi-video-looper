@@ -782,6 +782,7 @@ input, textarea, [contenteditable="true"], .log-drawer-body {
 }
 .pool-name {
   flex: 1;
+  font-size: var(--fs-sm);
   letter-spacing: 0.04em;
   white-space: nowrap;
   overflow: hidden;
