@@ -857,6 +857,7 @@ input, textarea, [contenteditable="true"], .log-drawer-body {
   padding: 4px 6px;
   background: #14161a;
   border-right: 2px solid #4a4e52;
+  border-bottom: 1px solid #3a3e42;
 }
 .tl-chan-num {
   width: 32px; height: 32px;
@@ -1019,7 +1020,6 @@ input, textarea, [contenteditable="true"], .log-drawer-body {
   flex-direction: column;
 }
 .tl-row-wrap {
-  border-bottom: 1px solid #3a3e42;
   min-height: 46px;
   flex: 1 1 46px;
   display: flex;
@@ -1036,6 +1036,7 @@ input, textarea, [contenteditable="true"], .log-drawer-body {
   display: flex;
   flex-direction: row;
   align-items: center;
+  border-bottom: 1px solid #3a3e42;
   background:
     linear-gradient(180deg, #14161a, #10121620);
   background-image:
