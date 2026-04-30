@@ -607,21 +607,7 @@ function FolderContextMenu({ x, y, node, fileCount, usedCount, onRename, onDelet
 function SettingsModal({ open, onClose, config, storage, activeUsbRoot,
                          onSave, onReboot, restarting,
                          timelineScale, onTimelineScaleChange }) {
-  const [draft, setDraft] = React.useState(() => deepClone(config));
-  React.useEffect(() => { setDraft(deepClone(config)); }, [config, open]);
-
   if (!open) return null;
-
-  const get = (sec, key, fallback = '') => (draft[sec] && draft[sec][key] != null ? draft[sec][key] : fallback);
-  const set = (sec, key, value) => setDraft(d => {
-    const next = { ...d, [sec]: { ...(d[sec] || {}), [key]: value } };
-    return next;
-  });
-
-  const isBool = (v) => v === 'true' || v === true;
-  const toBool = (v) => (v ? 'true' : 'false');
-
-  const usedPct = storage && storage.total ? (storage.used / storage.total) * 100 : 0;
 
   return (
     <div className="modal-bg" onClick={onClose}>
@@ -636,96 +622,6 @@ function SettingsModal({ open, onClose, config, storage, activeUsbRoot,
 
         <div className="modal-body">
 
-          <section className="cfg-sec">
-            <div className="cfg-sec-hd">
-              <EngravedLabel size="sm">PLAYBACK</EngravedLabel>
-            </div>
-            <div className="cfg-grid">
-              <label className="cfg-row">
-                <span>RANDOM ORDER</span>
-                <div className="seg">
-                  <button className={!isBool(get('process_manager','is_random'))?'on':''} onClick={()=>set('process_manager','is_random',toBool(false))}>SEQ</button>
-                  <button className={isBool(get('process_manager','is_random'))?'on':''} onClick={()=>set('process_manager','is_random',toBool(true))}>RANDOM</button>
-                </div>
-              </label>
-              <label className="cfg-row">
-                <span>WAIT BETWEEN VIDEOS (S)</span>
-                <input className="cfg-in" type="number" min="0" max="60"
-                  value={get('process_manager','wait_time','0')}
-                  onChange={e=>set('process_manager','wait_time',e.target.value)} />
-              </label>
-            </div>
-          </section>
-
-          <section className="cfg-sec">
-            <div className="cfg-sec-hd">
-              <EngravedLabel size="sm">VIDEO (MPV)</EngravedLabel>
-            </div>
-            <div className="cfg-grid">
-              <label className="cfg-row">
-                <span>SOUND OUT</span>
-                <div className="seg">
-                  {['hdmi','local','alsa'].map(m => (
-                    <button key={m} className={get('mpv','sound')===m?'on':''} onClick={()=>set('mpv','sound',m)}>{m.toUpperCase()}</button>
-                  ))}
-                </div>
-              </label>
-              <label className="cfg-row">
-                <span>STRETCH 4:3</span>
-                <div className="seg">
-                  <button className={!isBool(get('mpv','video_stretch'))?'on':''} onClick={()=>set('mpv','video_stretch',toBool(false))}>OFF</button>
-                  <button className={isBool(get('mpv','video_stretch'))?'on':''} onClick={()=>set('mpv','video_stretch',toBool(true))}>ON</button>
-                </div>
-              </label>
-              <label className="cfg-row">
-                <span>HW DECODE</span>
-                <div className="seg">
-                  {['auto','v4l2m2m','drm','no'].map(m => (
-                    <button key={m} className={get('mpv','hwdec')===m?'on':''} onClick={()=>set('mpv','hwdec',m)}>{m.toUpperCase()}</button>
-                  ))}
-                </div>
-              </label>
-            </div>
-          </section>
-
-          <section className="cfg-sec">
-            <div className="cfg-sec-hd">
-              <EngravedLabel size="sm">NES (RETROARCH)</EngravedLabel>
-            </div>
-            <div className="cfg-grid">
-              <label className="cfg-row">
-                <span>VERBOSE LOGS</span>
-                <div className="seg">
-                  <button className={!isBool(get('retroarch','verbose'))?'on':''} onClick={()=>set('retroarch','verbose',toBool(false))}>OFF</button>
-                  <button className={isBool(get('retroarch','verbose'))?'on':''} onClick={()=>set('retroarch','verbose',toBool(true))}>ON</button>
-                </div>
-              </label>
-              <label className="cfg-row">
-                <span>AUDIO</span>
-                <div className="seg">
-                  <button className={!isBool(get('retroarch','audio_enable'))?'on':''} onClick={()=>set('retroarch','audio_enable',toBool(false))}>OFF</button>
-                  <button className={isBool(get('retroarch','audio_enable'))?'on':''} onClick={()=>set('retroarch','audio_enable',toBool(true))}>ON</button>
-                </div>
-              </label>
-            </div>
-          </section>
-
-          <section className="cfg-sec">
-            <div className="cfg-sec-hd">
-              <EngravedLabel size="sm">LOGGING</EngravedLabel>
-            </div>
-            <div className="cfg-grid">
-              <label className="cfg-row">
-                <span>RELAY DEBUG</span>
-                <div className="seg">
-                  <button className={!isBool(get('logging','relay_debug'))?'on':''} onClick={()=>set('logging','relay_debug',toBool(false))}>OFF</button>
-                  <button className={isBool(get('logging','relay_debug'))?'on':''} onClick={()=>set('logging','relay_debug',toBool(true))}>ON</button>
-                </div>
-              </label>
-            </div>
-          </section>
-
-          {/* Browser-side preference: applies immediately, not part of the draft/APPLY flow */}
           <section className="cfg-sec">
             <div className="cfg-sec-hd">
               <EngravedLabel size="sm">USER INTERFACE</EngravedLabel>
@@ -747,62 +643,15 @@ function SettingsModal({ open, onClose, config, storage, activeUsbRoot,
             </div>
           </section>
 
-          {storage && (
-            <section className="cfg-sec">
-              <div className="cfg-sec-hd">
-                <EngravedLabel size="sm">STORAGE</EngravedLabel>
-              </div>
-              <div className="storage-bar">
-                <div className="storage-fill" style={{ width: `${usedPct}%` }} />
-                <div className="storage-ticks">
-                  {[...Array(20)].map((_,i)=> <span key={i} />)}
-                </div>
-              </div>
-              <div className="storage-stats">
-                <div><EngravedLabel size="xs">USED</EngravedLabel><div className="storage-num">{fmtBytes(storage.used)}</div></div>
-                <div><EngravedLabel size="xs">FREE</EngravedLabel><div className="storage-num">{fmtBytes(storage.free)}</div></div>
-                <div><EngravedLabel size="xs">TOTAL</EngravedLabel><div className="storage-num">{fmtBytes(storage.total)}</div></div>
-                <div><EngravedLabel size="xs">FILES</EngravedLabel><div className="storage-num">{storage.files}</div></div>
-              </div>
-              <div className="cfg-row">
-                <span>USB</span>
-                <div className="storage-num" style={{textAlign:'right'}}>
-                  {activeUsbRoot || '— NONE —'}
-                </div>
-              </div>
-            </section>
-          )}
-
-          <section className="cfg-sec">
-            <div className="cfg-sec-hd">
-              <EngravedLabel size="sm">SYSTEM</EngravedLabel>
-            </div>
-            <div className="cfg-grid">
-              <label className="cfg-row">
-                <span>REBOOT PI</span>
-                <HwButton label="⟳ REBOOT" color="red" onClick={() => {
-                  if (window.confirm('Reboot the Pi? The looper and the web UI will go down for ~30 seconds.')) {
-                    onReboot();
-                  }
-                }} disabled={restarting} />
-              </label>
-            </div>
-          </section>
-
         </div>
 
         <div className="modal-ft">
-          <HwButton label="CANCEL" color="beige" onClick={onClose} disabled={restarting} />
-          <HwButton label={restarting ? 'RESTARTING...' : 'APPLY'} color="orange"
-            disabled={restarting}
-            onClick={() => onSave(draft)} />
+          <HwButton label="CLOSE" color="beige" onClick={onClose} disabled={restarting} />
         </div>
       </div>
     </div>
   );
 }
-
-function deepClone(o) { return JSON.parse(JSON.stringify(o || {})); }
 
 // ─────────── Log Drawer — collapsible bottom panel for ws log stream ───────────
 function LogDrawer({ logs, open }) {
