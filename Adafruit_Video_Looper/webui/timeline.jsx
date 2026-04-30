@@ -7,13 +7,13 @@
 // across all rows so the user can read down to see what's playing on
 // each channel at any instant.
 //
-// Playlist entries arrive from the server (path-based, schema v4) and
-// are decorated client-side into:
-//   { path, displayName, durationSec, fileType, _uid }
+// Playlist entries arrive from the server (filename-based, schema v4
+// central) and are decorated client-side into:
+//   { filename, displayName, durationSec, fileType, _uid }
 // where _uid is a client-side counter we attach for stable React keys
-// and displayName is the basename of `path` for UI labels. Each entry
-// plays exactly once per loop iteration; users drag a clip in twice to
-// repeat it.
+// and displayName is the basename of `filename` for UI labels. Each
+// entry plays exactly once per loop iteration; users drag a clip in
+// twice to repeat it.
 
 const PX_PER_MAJOR_TICK = 200;    // visual density: each major tick spans 200px
 const MIN_ROW_WIDTH_PX  = 600;    // minimum row width when content is shorter than one tick

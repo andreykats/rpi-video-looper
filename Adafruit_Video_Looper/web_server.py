@@ -172,26 +172,13 @@ def _rel_under_usb(abs_path: str, usb_root: str) -> str:
 
 
 def _is_protected(target: Path) -> bool:
-    """The USB mount root itself or a numbered channel root (1..13)."""
-    for r in _usb_roots_resolved():
-        if target == r:
-            return True
-        try:
-            rel = target.relative_to(r)
-        except ValueError:
-            continue
-        parts = rel.parts
-        if len(parts) == 1 and parts[0].isdigit() and 1 <= int(parts[0]) <= 13:
-            return True
-    return False
+    """A USB mount root itself — never delete or rename via the web UI.
 
-
-def _channel_dir_for(ch: int) -> Optional[str]:
-    for root in _usb_roots():
-        candidate = os.path.join(root, str(ch))
-        if os.path.isdir(candidate):
-            return candidate
-    return None
+    Numbered folders 1..13 used to be the source of channel definitions
+    and were protected too. Under the central-playlist scheme they are
+    just folders — the user may keep, rename, or delete them.
+    """
+    return target in _usb_roots_resolved()
 
 
 def _upload_extensions(pm) -> tuple:
@@ -214,20 +201,19 @@ def _upload_extensions(pm) -> tuple:
     return tuple(out) if out else VIDEO_EXTS
 
 
-def _primary_usb_root() -> Optional[str]:
-    """Pick the USB root that holds the channel content. Some sticks
-    expose two partitions (e.g. a small EFI + a large data volume); we
-    want uploads to land on the data volume. Prefer any root that has
-    at least one numbered channel folder; fall back to the root with
-    the most free space; finally, the first root.
+def _upload_target_root(pm) -> Optional[str]:
+    """Pick the USB root for new uploads.
+
+    Prefers `pm.active_usb_root` (where the central playlist.json
+    lives) so uploads land on the volume the looper is reading. Falls
+    back to the root with the most free space, then the first root.
     """
+    if pm is not None and pm.active_usb_root is not None:
+        if os.path.isdir(pm.active_usb_root):
+            return pm.active_usb_root
     roots = _usb_roots()
     if not roots:
         return None
-    for root in roots:
-        for ch in range(1, 14):
-            if os.path.isdir(os.path.join(root, str(ch))):
-                return root
     best = None
     best_free = -1
     for root in roots:
@@ -241,19 +227,15 @@ def _primary_usb_root() -> Optional[str]:
     return best or roots[0]
 
 
-def _channel_for_dir(path: Path) -> Optional[int]:
-    """If `path` is a numbered channel folder under a USB root, return the channel num."""
-    for r in _usb_roots_resolved():
-        try:
-            rel = path.relative_to(r)
-        except ValueError:
-            continue
-        parts = rel.parts
-        if len(parts) == 1 and parts[0].isdigit():
-            n = int(parts[0])
-            if 1 <= n <= 13:
-                return n
-    return None
+def _is_active_mount(pm, src_usb: Optional[Path]) -> bool:
+    """True if `src_usb` (a resolved Path) points at pm.active_usb_root."""
+    if src_usb is None or pm.active_usb_root is None:
+        return False
+    try:
+        active = Path(pm.active_usb_root).resolve(strict=False)
+    except OSError:
+        return False
+    return src_usb == active
 
 
 # ---------- Pool tree ----------
@@ -479,26 +461,39 @@ def _active_kind(pm) -> Optional[str]:
     return None
 
 
+def _read_central(pm) -> dict:
+    """Read the active mount's central playlist.json. Returns
+    `{'channels': {...}}`; an empty dict when no active mount or no
+    central file. Cheap and lock-free — `os.replace` makes writes atomic
+    so concurrent reads observe a consistent state.
+    """
+    if pm.active_usb_root is None:
+        return {'channels': {}}
+    data = playlist_io.read_central_playlist(pm.active_usb_root)
+    return data if data is not None else {'channels': {}}
+
+
+def _build_channel_playlist(pm, entries) -> Playlist:
+    """Materialize a channel's entries against the active USB root."""
+    if pm.active_usb_root is None or not entries:
+        return Playlist([])
+    movies = playlist_io.materialize_channel(
+        pm.active_usb_root, entries, pm._get_video_duration,
+    )
+    return Playlist(movies)
+
+
 def _build_state_snapshot(pm) -> dict:
     bm = pm._broadcast_manager
     channels = {}
-    # Re-resolve channel directories from the file reader so the UI can
-    # build absolute paths for drag-drop / move targets that match the
-    # mount the file actually lives on. Cheap (a handful of os.path.isdir).
-    channel_paths = {}
-    if hasattr(pm._reader, 'search_channel_paths'):
-        try:
-            channel_paths = pm._reader.search_channel_paths()
-        except Exception as e:
-            log.warning('search_channel_paths failed: %s', e)
+    usb_root = pm.active_usb_root
+    central_channels = _read_central(pm)['channels']
+
     if bm is not None:
         for ch_num, pl in bm._channel_playlists.items():
-            ch_dir_for_entries = channel_paths.get(ch_num, '')
-            ch_usb_root = (os.path.dirname(ch_dir_for_entries.rstrip('/'))
-                           if ch_dir_for_entries else '')
             entries = [{
-                'path': (_rel_under_usb(m.target, ch_usb_root)
-                         if ch_usb_root else m.filename),
+                'filename': (_rel_under_usb(m.target, usb_root)
+                             if usb_root else m.filename),
                 'durationSec': m.duration,
                 'fileType': m.content_type,
             } for m in pl._movies]
@@ -524,18 +519,12 @@ def _build_state_snapshot(pm) -> dict:
                         'durationSec': movie.duration,
                         'loopPositionSec': cumulative + float(selection.seek_offset),
                     }
-            ch_dir = channel_paths.get(ch_num, '')
-            ch_name = None
-            if ch_dir:
-                meta = playlist_io.read_playlist_meta(ch_dir)
-                if meta is not None:
-                    ch_name = meta['name']
+            ch_meta = central_channels.get(ch_num) or {}
             channels[str(ch_num)] = {
                 'totalDurationSec': loop_total,
                 'current': cur,
                 'entries': entries,
-                'channelDir': ch_dir,
-                'name': ch_name,
+                'name': ch_meta.get('name'),
             }
 
     cfg = {}
@@ -559,6 +548,7 @@ def _build_state_snapshot(pm) -> dict:
             'channels': channels,
         },
         'mountRoots': _usb_roots(),
+        'activeUsbRoot': usb_root,
         'config': cfg,
         'uploadExtensions': list(_upload_extensions(pm)),
     }
@@ -648,23 +638,23 @@ async def get_playlist_handler(request: Request):
             {'ok': False, 'error': 'broadcast-mode-disabled'},
             status_code=409,
         )
+    usb_root = pm.active_usb_root
     pl = bm._channel_playlists.get(ch)
-    if pl is None:
-        return JSONResponse({'channel': ch, 'entries': [], 'name': None})
-    channel_dir = _channel_dir_for(ch)
-    ch_usb_root = (os.path.dirname(channel_dir.rstrip('/'))
-                   if channel_dir else '')
-    entries = [{
-        'path': (_rel_under_usb(m.target, ch_usb_root)
-                 if ch_usb_root else m.filename),
-        'durationSec': m.duration,
-        'fileType': m.content_type,
-    } for m in pl._movies]
+    entries = []
+    if pl is not None:
+        for m in pl._movies:
+            rel = (_rel_under_usb(m.target, usb_root)
+                   if usb_root else m.filename)
+            entries.append({
+                'filename': rel,
+                'durationSec': m.duration,
+                'fileType': m.content_type,
+            })
     name = None
-    if channel_dir is not None:
-        meta = playlist_io.read_playlist_meta(channel_dir)
-        if meta is not None:
-            name = meta['name']
+    central_channels = _read_central(pm)['channels']
+    ch_data = central_channels.get(ch)
+    if ch_data is not None:
+        name = ch_data.get('name')
     return JSONResponse({'channel': ch, 'entries': entries, 'name': name})
 
 
@@ -672,6 +662,7 @@ async def post_playlist_handler(request: Request):
     pm = request.app.state.pm
     bm = pm._broadcast_manager
     broker: Broker = request.app.state.broker
+    lock: asyncio.Lock = request.app.state.playlist_lock
     try:
         ch = int(request.path_params['ch'])
     except (KeyError, ValueError):
@@ -681,6 +672,8 @@ async def post_playlist_handler(request: Request):
             {'ok': False, 'error': 'broadcast-mode-disabled'},
             status_code=409,
         )
+    if pm.active_usb_root is None:
+        return JSONResponse({'ok': False, 'error': 'no-usb'}, status_code=503)
     try:
         body = await request.json()
     except ValueError:
@@ -691,105 +684,78 @@ async def post_playlist_handler(request: Request):
     if not isinstance(raw_entries, list):
         return JSONResponse({'ok': False, 'error': 'bad-entries'}, status_code=400)
 
-    channel_dir = _channel_dir_for(ch)
-    if channel_dir is None:
-        return JSONResponse(
-            {'ok': False, 'error': 'channel-folder-missing'},
-            status_code=404,
-        )
+    # Pre-validate every filename. Reject 400 on any violation, naming
+    # the offending entry so the UI can point the user at it.
+    cleaned_entries = []
+    for idx, raw in enumerate(raw_entries):
+        if not isinstance(raw, dict):
+            return JSONResponse(
+                {'ok': False, 'error': 'bad-entry-shape', 'index': idx},
+                status_code=400,
+            )
+        try:
+            fn = playlist_io.clean_filename(raw.get('filename'))
+        except ValueError as e:
+            return JSONResponse(
+                {'ok': False, 'error': 'bad-filename',
+                 'index': idx, 'detail': str(e)},
+                status_code=400,
+            )
+        cleaned_entries.append({'filename': fn})
 
     # Name handling — three cases the wire format must distinguish:
     #   key absent           → preserve existing name (drag-reorder path)
     #   '' or None           → clear the name
     #   non-empty string     → set
-    name_kw = {}
-    if 'name' in body:
+    has_name_key = 'name' in body
+    new_name = None
+    if has_name_key:
         try:
-            name_kw['name'] = playlist_io.clean_name(body.get('name'))
+            new_name = playlist_io.clean_name(body.get('name'))
         except ValueError as e:
             return JSONResponse(
                 {'ok': False, 'error': 'bad-name', 'detail': str(e)},
                 status_code=400,
             )
-    else:
-        existing_meta = playlist_io.read_playlist_meta(channel_dir)
-        if existing_meta is not None:
-            name_kw['name'] = existing_meta['name']
 
-    ch_usb_root = os.path.dirname(channel_dir.rstrip('/'))
+    async with lock:
+        central = _read_central(pm)
+        existing = central['channels'].get(ch, {'name': None, 'entries': []})
+        ch_name = new_name if has_name_key else existing.get('name')
+        central['channels'][ch] = {
+            'name': ch_name,
+            'entries': cleaned_entries,
+        }
+        try:
+            playlist_io.write_central_playlist(
+                pm.active_usb_root, central['channels'],
+            )
+        except (ValueError, OSError) as e:
+            log.exception('write_central_playlist failed: %s', e)
+            return JSONResponse(
+                {'ok': False, 'error': 'write-failed', 'detail': str(e)},
+                status_code=500,
+            )
 
-    cleaned = []
-    skipped = []
-    for raw in raw_entries:
-        if not isinstance(raw, dict):
-            continue
-        rel = raw.get('path')
-        if not isinstance(rel, str) or not rel:
-            continue
-        # _safe_resolve also enforces USB-root containment + symlink safety.
-        target = _safe_resolve(os.path.join(ch_usb_root, rel))
-        if target is None or not target.is_file():
-            skipped.append(rel)
-            continue
-        # Re-derive the canonical relative path so symlinks/case differences
-        # are normalized away before hitting playlist.json.
-        canonical = _rel_under_usb(str(target), ch_usb_root)
-        if not canonical:
-            skipped.append(rel)
-            continue
-        cleaned.append({'path': canonical})
-
-    try:
-        playlist_io.write_playlist_json(channel_dir, cleaned, **name_kw)
-    except (ValueError, OSError) as e:
-        log.exception('write_playlist_json failed: %s', e)
-        return JSONResponse(
-            {'ok': False, 'error': 'write-failed', 'detail': str(e)},
-            status_code=500,
-        )
-
-    new_pl = _build_playlist_from_disk(pm, channel_dir)
+    new_pl = _build_channel_playlist(pm, cleaned_entries)
     pm.publish_playlist_intent(ch, new_pl)
     broker.publish({
         'type': 'playlist.changed',
         'ts': time.time(),
         'channel': ch,
-        'source': 'json',
     })
+    skipped = max(0, len(cleaned_entries) - new_pl.length())
     return JSONResponse({
         'ok': True,
-        'applied': len(cleaned),
-        'skipped': skipped,
-        'source': 'json',
+        'applied': new_pl.length(),
+        'skippedCount': skipped,
     })
-
-
-def _build_playlist_from_disk(pm, channel_dir: str) -> Playlist:
-    """Re-read the channel folder + playlist.json and build a fresh Playlist.
-
-    Mirrors the build logic in process_manager._build_broadcast_channels
-    so a hot-swap matches what a fresh startup would produce.
-    """
-    movies = pm._get_movies_from_path(channel_dir)
-    json_entries = playlist_io.read_playlist_json(channel_dir)
-    if json_entries is None:
-        return Playlist(sorted(movies))
-    duration_by_path = {m.target: m.duration for m in movies}
-
-    def duration_for_path(p, _cache=duration_by_path):
-        if p in _cache:
-            return _cache[p]
-        return pm._get_video_duration(p)
-
-    usb_root = os.path.dirname(channel_dir.rstrip('/'))
-    return Playlist(playlist_io.materialize(
-        channel_dir, json_entries, usb_root, duration_for_path,
-    ))
 
 
 async def post_file_rename_handler(request: Request):
     pm = request.app.state.pm
     broker: Broker = request.app.state.broker
+    lock: asyncio.Lock = request.app.state.playlist_lock
     try:
         body = await request.json()
     except ValueError:
@@ -832,8 +798,8 @@ async def post_file_rename_handler(request: Request):
         except ValueError:
             old_rel = new_rel = None
         if old_rel is not None and new_rel is not None:
-            updated_channels = _rewrite_playlists_for_path_change(
-                pm, src_usb, old_rel, new_rel,
+            updated_channels = await _rewrite_central_for_filename_change(
+                pm, lock, src_usb, old_rel, new_rel,
             )
     broker.publish({'type': 'pool.changed', 'ts': time.time()})
     for ch in updated_channels:
@@ -841,7 +807,6 @@ async def post_file_rename_handler(request: Request):
             'type': 'playlist.changed',
             'ts': time.time(),
             'channel': ch,
-            'source': 'json',
         })
     return JSONResponse({
         'ok': True,
@@ -850,111 +815,110 @@ async def post_file_rename_handler(request: Request):
     })
 
 
-def _iter_channel_playlists(usb_root):
-    """Yield (channel_num, channel_dir, meta) for every numbered channel
-    folder under `usb_root` whose playlist.json reads cleanly. Channels
-    without a v4 playlist file are skipped (their content comes from the
-    legacy alphabetical scan, which doesn't reference paths).
-    """
-    root_str = str(usb_root)
-    for ch_num in range(1, 14):
-        channel_dir = os.path.join(root_str, str(ch_num))
-        if not os.path.isdir(channel_dir):
-            continue
-        meta = playlist_io.read_playlist_meta(channel_dir)
-        if meta is None:
-            continue
-        yield ch_num, channel_dir, meta
-
-
-def _rewrite_playlists_for_path_change(
-    pm, usb_root: Path, old_rel: str, new_rel: Optional[str],
+async def _rewrite_central_for_filename_change(
+    pm, lock: asyncio.Lock, src_usb: Optional[Path],
+    old_rel: str, new_rel: Optional[str],
 ) -> list:
-    """Walk every channel playlist on `usb_root` and update entries
-    whose `path` equals `old_rel`.
+    """Rewrite the central playlist after a file rename/delete/move.
 
-    `new_rel=None` removes the matching entries; otherwise replaces the
-    path. Used by file rename/delete/move (exact-match).
+    Walks every channel in the active mount's central file. Entries whose
+    `filename` equals `old_rel` are replaced with `new_rel` (rename/move)
+    or dropped (`new_rel is None`, delete).
 
-    Returns the channel numbers whose playlists actually changed.
+    Skips when the modified file lives on a non-active mount: the central
+    file there doesn't reference it.
+
+    Returns the channel numbers whose entries actually changed.
     """
+    if not _is_active_mount(pm, src_usb):
+        return []
     updated = []
-    for ch_num, channel_dir, meta in _iter_channel_playlists(usb_root):
-        ents = meta['entries']
-        if new_rel is None:
-            new_ents = [e for e in ents if e['path'] != old_rel]
-        else:
-            new_ents = [
-                {'path': new_rel if e['path'] == old_rel else e['path']}
-                for e in ents
-            ]
-        if new_ents == ents:
-            continue
+    async with lock:
+        central = _read_central(pm)
+        for ch_num, ch_data in central['channels'].items():
+            ents = ch_data.get('entries', [])
+            if new_rel is None:
+                new_ents = [e for e in ents if e['filename'] != old_rel]
+            else:
+                new_ents = [
+                    {'filename': (new_rel if e['filename'] == old_rel
+                                  else e['filename'])}
+                    for e in ents
+                ]
+            if new_ents == ents:
+                continue
+            ch_data['entries'] = new_ents
+            updated.append(ch_num)
+        if not updated:
+            return []
         try:
-            playlist_io.write_playlist_json(
-                channel_dir, new_ents, name=meta['name'],
+            playlist_io.write_central_playlist(
+                pm.active_usb_root, central['channels'],
             )
         except (ValueError, OSError) as e:
-            log.exception('rewriting %s/playlist.json failed: %s',
-                          channel_dir, e)
-            continue
-        pm.publish_playlist_intent(
-            ch_num, _build_playlist_from_disk(pm, channel_dir),
-        )
-        updated.append(ch_num)
+            log.exception('rewriting central playlist failed: %s', e)
+            return []
+    for ch in updated:
+        ents = central['channels'][ch].get('entries', [])
+        pm.publish_playlist_intent(ch, _build_channel_playlist(pm, ents))
     return updated
 
 
-def _rewrite_playlists_for_folder_change(
-    pm, usb_root: Path, old_folder_rel: str, new_folder_rel: Optional[str],
+async def _rewrite_central_for_folder_change(
+    pm, lock: asyncio.Lock, src_usb: Optional[Path],
+    old_folder_rel: str, new_folder_rel: Optional[str],
 ) -> list:
-    """Walk every channel playlist on `usb_root` and update entries
-    whose `path` lives inside `old_folder_rel` (prefix match).
+    """Rewrite the central playlist after a folder rename/delete.
 
-    `new_folder_rel=None` removes the matching entries (folder delete);
-    otherwise replaces the prefix (folder rename). The trailing slash on
-    the prefix is critical: renaming `videos` must not match entries
-    under `videos2`.
-
-    Returns the channel numbers whose playlists actually changed.
+    Entries whose `filename` lives inside `old_folder_rel` (prefix match
+    on `old_folder_rel + '/'`) are rewritten to the new prefix or dropped
+    when `new_folder_rel is None`. The trailing slash on the prefix is
+    load-bearing: renaming `videos` must not match `videos2/...` entries.
     """
+    if not _is_active_mount(pm, src_usb):
+        return []
     old_prefix = old_folder_rel.rstrip('/') + '/'
     new_prefix = (
         new_folder_rel.rstrip('/') + '/' if new_folder_rel else None
     )
     updated = []
-    for ch_num, channel_dir, meta in _iter_channel_playlists(usb_root):
-        ents = meta['entries']
-        if new_prefix is None:
-            new_ents = [
-                e for e in ents if not e['path'].startswith(old_prefix)
-            ]
-        else:
-            new_ents = [
-                ({'path': new_prefix + e['path'][len(old_prefix):]}
-                 if e['path'].startswith(old_prefix) else e)
-                for e in ents
-            ]
-        if new_ents == ents:
-            continue
+    async with lock:
+        central = _read_central(pm)
+        for ch_num, ch_data in central['channels'].items():
+            ents = ch_data.get('entries', [])
+            if new_prefix is None:
+                new_ents = [
+                    e for e in ents if not e['filename'].startswith(old_prefix)
+                ]
+            else:
+                new_ents = [
+                    ({'filename': new_prefix + e['filename'][len(old_prefix):]}
+                     if e['filename'].startswith(old_prefix) else e)
+                    for e in ents
+                ]
+            if new_ents == ents:
+                continue
+            ch_data['entries'] = new_ents
+            updated.append(ch_num)
+        if not updated:
+            return []
         try:
-            playlist_io.write_playlist_json(
-                channel_dir, new_ents, name=meta['name'],
+            playlist_io.write_central_playlist(
+                pm.active_usb_root, central['channels'],
             )
         except (ValueError, OSError) as e:
-            log.exception('rewriting %s/playlist.json failed: %s',
-                          channel_dir, e)
-            continue
-        pm.publish_playlist_intent(
-            ch_num, _build_playlist_from_disk(pm, channel_dir),
-        )
-        updated.append(ch_num)
+            log.exception('rewriting central playlist failed: %s', e)
+            return []
+    for ch in updated:
+        ents = central['channels'][ch].get('entries', [])
+        pm.publish_playlist_intent(ch, _build_channel_playlist(pm, ents))
     return updated
 
 
 async def post_file_delete_handler(request: Request):
     pm = request.app.state.pm
     broker: Broker = request.app.state.broker
+    lock: asyncio.Lock = request.app.state.playlist_lock
     try:
         body = await request.json()
     except ValueError:
@@ -988,8 +952,8 @@ async def post_file_delete_handler(request: Request):
         except ValueError:
             old_rel = None
         if old_rel is not None:
-            updated_channels = _rewrite_playlists_for_path_change(
-                pm, src_usb, old_rel, None,
+            updated_channels = await _rewrite_central_for_filename_change(
+                pm, lock, src_usb, old_rel, None,
             )
     broker.publish({'type': 'pool.changed', 'ts': time.time()})
     for ch in updated_channels:
@@ -997,18 +961,22 @@ async def post_file_delete_handler(request: Request):
             'type': 'playlist.changed',
             'ts': time.time(),
             'channel': ch,
-            'source': 'json',
         })
     return JSONResponse({'ok': True, 'playlistsUpdated': updated_channels})
 
 
 async def post_file_move_handler(request: Request):
-    """Move a file between USB folders. Updates playlist.json in both
-    source and destination folders if applicable. Used by drag-drop
-    when a pool file is dropped onto a channel that doesn't own it.
+    """Move a file between USB folders.
+
+    Rewrites the central playlist's entries for the source mount to the
+    new location. Cross-mount moves drop the entries from the source
+    mount's central playlist (the destination mount's central file —
+    if any — references files relative to its own root, which the
+    source mount's data would never satisfy).
     """
     pm = request.app.state.pm
     broker: Broker = request.app.state.broker
+    lock: asyncio.Lock = request.app.state.playlist_lock
     try:
         body = await request.json()
     except ValueError:
@@ -1060,8 +1028,8 @@ async def post_file_move_handler(request: Request):
             except ValueError:
                 new_rel = None
         if old_rel is not None:
-            updated_channels = _rewrite_playlists_for_path_change(
-                pm, src_usb, old_rel, new_rel,
+            updated_channels = await _rewrite_central_for_filename_change(
+                pm, lock, src_usb, old_rel, new_rel,
             )
     broker.publish({'type': 'pool.changed', 'ts': time.time()})
     for ch in updated_channels:
@@ -1069,7 +1037,6 @@ async def post_file_move_handler(request: Request):
             'type': 'playlist.changed',
             'ts': time.time(),
             'channel': ch,
-            'source': 'json',
         })
     return JSONResponse({
         'ok': True,
@@ -1097,7 +1064,7 @@ async def post_file_upload_handler(request: Request):
             status_code=400,
         )
 
-    root = _primary_usb_root()
+    root = _upload_target_root(pm)
     if root is None:
         return JSONResponse({'ok': False, 'error': 'no-usb'}, status_code=503)
     final_path = os.path.join(root, name)
@@ -1146,6 +1113,7 @@ async def post_file_upload_handler(request: Request):
 async def post_folder_rename_handler(request: Request):
     pm = request.app.state.pm
     broker: Broker = request.app.state.broker
+    lock: asyncio.Lock = request.app.state.playlist_lock
     try:
         body = await request.json()
     except ValueError:
@@ -1186,8 +1154,8 @@ async def post_folder_rename_handler(request: Request):
         except ValueError:
             old_folder_rel = new_folder_rel = None
         if old_folder_rel and new_folder_rel:
-            updated_channels = _rewrite_playlists_for_folder_change(
-                pm, src_usb, old_folder_rel, new_folder_rel,
+            updated_channels = await _rewrite_central_for_folder_change(
+                pm, lock, src_usb, old_folder_rel, new_folder_rel,
             )
     broker.publish({'type': 'pool.changed', 'ts': time.time()})
     for ch in updated_channels:
@@ -1195,7 +1163,6 @@ async def post_folder_rename_handler(request: Request):
             'type': 'playlist.changed',
             'ts': time.time(),
             'channel': ch,
-            'source': 'json',
         })
     return JSONResponse({
         'ok': True,
@@ -1207,6 +1174,7 @@ async def post_folder_rename_handler(request: Request):
 async def post_folder_delete_handler(request: Request):
     pm = request.app.state.pm
     broker: Broker = request.app.state.broker
+    lock: asyncio.Lock = request.app.state.playlist_lock
     try:
         body = await request.json()
     except ValueError:
@@ -1240,8 +1208,8 @@ async def post_folder_delete_handler(request: Request):
         except ValueError:
             old_folder_rel = None
         if old_folder_rel:
-            updated_channels = _rewrite_playlists_for_folder_change(
-                pm, src_usb, old_folder_rel, None,
+            updated_channels = await _rewrite_central_for_folder_change(
+                pm, lock, src_usb, old_folder_rel, None,
             )
     broker.publish({'type': 'pool.changed', 'ts': time.time()})
     for ch in updated_channels:
@@ -1249,7 +1217,6 @@ async def post_folder_delete_handler(request: Request):
             'type': 'playlist.changed',
             'ts': time.time(),
             'channel': ch,
-            'source': 'json',
         })
     return JSONResponse({'ok': True, 'playlistsUpdated': updated_channels})
 
@@ -1514,6 +1481,10 @@ def create_app(pm) -> Starlette:
         app.state.pm = pm
         app.state.broker = Broker()
         app.state.shutdown = asyncio.Event()
+        # Serializes read-modify-write of the central playlist.json.
+        # Saves to different channels race against each other since the
+        # whole file is rewritten on each save; the lock keeps them sane.
+        app.state.playlist_lock = asyncio.Lock()
         loop = asyncio.get_running_loop()
         app.state.broker.attach_loop(loop)
 

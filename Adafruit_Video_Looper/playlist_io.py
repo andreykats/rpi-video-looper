@@ -1,50 +1,52 @@
-"""Per-channel playlist persistence.
+"""Central USB playlist persistence.
 
-Each channel folder may contain a `playlist.json` describing the explicit
-play order. When present, it is the source of truth for that channel;
-when absent, the channel falls back to the existing alphabetical scan of
-`_get_movies_from_path`.
+A single `playlist.json` at the USB drive root maps each broadcast
+channel (1..13; channel 1 is unmapped per existing convention) to a
+list of file entries. Entries reference files anywhere on the USB by
+USB-root-relative path.
 
 Schema (version 4):
 
     {
       "version": 4,
-      "name": "EVENING NEWS",
-      "entries": [
-        {"path": "videos/EVENING_NEWS_0600.mp4"},
-        {"path": "ads/AD_DETERGENT_30S.mp4"}
-      ]
+      "channels": {
+        "2": {
+          "name": "EVENING NEWS",
+          "entries": [
+            {"filename": "shows/news/evening.mp4"},
+            {"filename": "ads/detergent.mp4"}
+          ]
+        }
+      }
     }
 
-`path` is USB-root-relative — resolved against the parent of the
-channel folder (the USB drive mount). Paths may point anywhere on the
-USB drive, not just inside the channel folder. The same path may
-appear multiple times to repeat a clip.
+Repeats are encoded by listing the same `filename` twice. ROM-vs-video
+is implicit from the file extension. Channels not present in the
+`channels` object are empty.
 
-Optional top-level `name` is a user-facing channel label shown in the
-web UI.
+`filename` is a path relative to the USB drive root, forward-slash
+separated, with no `..` segments and no leading slash. Missing files
+on disk are dropped at materialize time with a logged warning, never
+raised.
 
-v1/v2/v3 files are rejected on read; the channel falls back to the
-alphabetical scan as if no playlist file existed. Saving once via the UI
-upgrades it.
-
-Missing files (path not found on disk) are skipped with a logged warning
-during materialize, never raised.
+Pre-v4 per-channel `<channel>/playlist.json` files (an earlier in-tree
+format that never shipped) are ignored — users rebuild via the web UI.
 """
 import json
 import logging
 import os
 import tempfile
-from typing import Callable, Iterable, Optional
+from typing import Callable, List, Optional
 
 from .model import Movie
 
 log = logging.getLogger('looper.playlist')
 
-PLAYLIST_FILENAME = 'playlist.json'
+CENTRAL_PLAYLIST_FILENAME = 'playlist.json'
 PLAYLIST_VERSION = 4
-SUPPORTED_PLAYLIST_VERSIONS = (4,)
 MAX_NAME_LEN = 64
+MAX_FILENAME_LEN = 512
+MAX_FILE_SIZE = 1 * 1024 * 1024  # 1 MB — sanity cap so a garbage file can't OOM us.
 
 
 def clean_name(raw) -> Optional[str]:
@@ -69,45 +71,82 @@ def clean_name(raw) -> Optional[str]:
     return cleaned
 
 
-def _clean_path(raw) -> Optional[str]:
-    """Validate and normalize a USB-root-relative entry path.
+def clean_filename(raw) -> str:
+    """Validate and normalize a USB-root-relative filename.
 
-    Returns the normalized POSIX path (forward slashes, no leading slash,
-    no `..` segments) on success, or None when the input is unusable.
-    Does not check the filesystem — that happens at materialize time.
+    Returns the normalized POSIX path on success; raises ValueError on
+    any rule violation. Does not check the filesystem — that happens at
+    materialize time.
+
+    Rules:
+    - Non-empty UTF-8 string, ≤MAX_FILENAME_LEN chars.
+    - No NUL bytes or control characters.
+    - No backslashes (Linux-only deploy; reject preemptively).
+    - No leading slash (must be relative).
+    - No `..` segment after normalization.
     """
-    if not isinstance(raw, str) or not raw:
-        return None
+    if not isinstance(raw, str):
+        raise ValueError('filename must be a string')
+    if not raw:
+        raise ValueError('filename is empty')
+    if len(raw) > MAX_FILENAME_LEN:
+        raise ValueError(
+            'filename exceeds {0} chars'.format(MAX_FILENAME_LEN)
+        )
     if '\x00' in raw:
-        return None
-    # Normalize slashes; reject Windows-style backslashes outright.
+        raise ValueError('filename contains NUL byte')
+    for ch in raw:
+        if ord(ch) < 0x20 or ord(ch) == 0x7f:
+            raise ValueError('filename contains control character')
     if '\\' in raw:
-        return None
+        raise ValueError('filename contains backslash')
+    if raw.startswith('/'):
+        raise ValueError('filename must be relative (no leading slash)')
     norm = os.path.normpath(raw)
-    # normpath('foo/../bar') → 'bar', but normpath('../foo') → '../foo';
-    # reject anything that escapes the USB root or is absolute.
-    if norm.startswith('..') or norm.startswith('/') or norm in ('.', ''):
-        return None
-    # Defense in depth — split and reject any '..' segment surviving normpath.
-    if '..' in norm.split('/'):
-        return None
+    # normpath('foo/../bar') → 'bar', but '../foo' → '../foo'.
+    if norm in ('.', '') or norm.startswith('..') or '..' in norm.split('/'):
+        raise ValueError('filename escapes USB root')
+    if norm.startswith('/'):
+        raise ValueError('filename normalized to absolute path')
     return norm
 
 
-def read_playlist_meta(channel_dir: str) -> Optional[dict]:
-    """Read playlist.json from a channel directory.
+def _validate_entries(raw_entries) -> List[dict]:
+    out = []
+    for raw in raw_entries:
+        if not isinstance(raw, dict):
+            raise ValueError(
+                'entry must be an object, got {0!r}'.format(type(raw))
+            )
+        out.append({'filename': clean_filename(raw.get('filename'))})
+    return out
 
-    Returns `{'name': str|None, 'entries': [{'path': str}, ...]}` on
-    success, or None if the file is absent, unparseable, or written under
-    a non-supported schema version. Malformed individual entries are
-    dropped with a warning; the file as a whole is rejected when the
-    top-level shape or version is wrong.
+
+def read_central_playlist(usb_root: str) -> Optional[dict]:
+    """Read <usb_root>/playlist.json.
+
+    Returns
+        {'channels': {channel_num: int -> {'name': str|None,
+                                            'entries': [{'filename': str}]}}}
+    on success, or None when the file is absent, oversized, malformed,
+    or under a non-supported version. Per-entry validation drops bad
+    entries with a warning; the file as a whole is rejected only on
+    top-level shape or version mismatch.
     """
-    path = os.path.join(channel_dir, PLAYLIST_FILENAME)
+    path = os.path.join(usb_root, CENTRAL_PLAYLIST_FILENAME)
     if not os.path.isfile(path):
         return None
     try:
-        with open(path, 'r') as f:
+        size = os.path.getsize(path)
+    except OSError as e:
+        log.warning('failed to stat %s: %s', path, e)
+        return None
+    if size > MAX_FILE_SIZE:
+        log.warning('%s rejected: %d bytes exceeds %d-byte cap',
+                    path, size, MAX_FILE_SIZE)
+        return None
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
             data = json.load(f)
     except (OSError, ValueError) as e:
         log.warning('failed to read %s: %s', path, e)
@@ -116,77 +155,101 @@ def read_playlist_meta(channel_dir: str) -> Optional[dict]:
     if not isinstance(data, dict):
         log.warning('%s is not a JSON object', path)
         return None
-    if data.get('version') not in SUPPORTED_PLAYLIST_VERSIONS:
+    if data.get('version') != PLAYLIST_VERSION:
         log.warning('%s unknown version %r', path, data.get('version'))
         return None
-    raw_entries = data.get('entries')
-    if not isinstance(raw_entries, list):
-        log.warning('%s missing entries list', path)
+    raw_channels = data.get('channels')
+    if not isinstance(raw_channels, dict):
+        log.warning('%s missing channels object', path)
         return None
 
-    try:
-        name = clean_name(data.get('name'))
-    except ValueError as e:
-        log.warning('%s: ignoring invalid name (%s)', path, e)
-        name = None
-
-    cleaned = []
-    for raw in raw_entries:
-        if not isinstance(raw, dict):
+    channels = {}
+    for key, raw in raw_channels.items():
+        try:
+            ch_num = int(key)
+        except (TypeError, ValueError):
+            log.warning('%s: ignoring non-integer channel key %r', path, key)
             continue
-        cleaned_path = _clean_path(raw.get('path'))
-        if cleaned_path is None:
-            log.warning('%s: ignoring entry with invalid path: %r',
-                        path, raw.get('path'))
+        if ch_num < 1 or ch_num > 13:
+            log.warning('%s: channel %d out of range 1..13', path, ch_num)
             continue
-        cleaned.append({'path': cleaned_path})
-    return {'name': name, 'entries': cleaned}
-
-
-def read_playlist_json(channel_dir: str) -> Optional[list]:
-    """Read playlist.json entries (channel name discarded).
-
-    Thin wrapper around `read_playlist_meta` for callers that only need
-    the playback order. Returns the entries list, or None when the file
-    is absent or unparseable.
-    """
-    meta = read_playlist_meta(channel_dir)
-    return None if meta is None else meta['entries']
-
-
-def write_playlist_json(channel_dir: str, entries: Iterable, *,
-                        name: Optional[str] = None) -> None:
-    """Atomically write playlist.json to a channel directory.
-
-    Validates each entry. `path` must be a USB-root-relative path with
-    no leading slash and no `..` traversal. The optional `name` is the
-    user-facing channel label; pass None (or a blank string) to omit it.
-
-    Raises FileNotFoundError if channel_dir doesn't exist; ValueError on
-    a malformed entry or invalid name; OSError on filesystem failures.
-    """
-    if not os.path.isdir(channel_dir):
-        raise FileNotFoundError(channel_dir)
-
-    cleaned_name = clean_name(name)
-
-    cleaned = []
-    for raw in entries:
         if not isinstance(raw, dict):
-            raise ValueError('entry must be a dict, got {0!r}'.format(type(raw)))
-        cleaned_path = _clean_path(raw.get('path'))
-        if cleaned_path is None:
-            raise ValueError('invalid entry path: {0!r}'.format(raw.get('path')))
-        cleaned.append({'path': cleaned_path})
+            log.warning('%s: channel %d is not an object', path, ch_num)
+            continue
+        try:
+            name = clean_name(raw.get('name'))
+        except ValueError as e:
+            log.warning('%s: ignoring invalid channel %d name (%s)',
+                        path, ch_num, e)
+            name = None
+        raw_entries = raw.get('entries')
+        if not isinstance(raw_entries, list):
+            log.warning('%s: channel %d missing entries list', path, ch_num)
+            continue
+        cleaned = []
+        for entry in raw_entries:
+            if not isinstance(entry, dict):
+                log.warning('%s: ch %d ignoring non-object entry: %r',
+                            path, ch_num, entry)
+                continue
+            try:
+                fn = clean_filename(entry.get('filename'))
+            except ValueError as e:
+                log.warning('%s: ch %d ignoring invalid filename %r (%s)',
+                            path, ch_num, entry.get('filename'), e)
+                continue
+            cleaned.append({'filename': fn})
+        channels[ch_num] = {'name': name, 'entries': cleaned}
+    return {'channels': channels}
 
-    payload = {'version': PLAYLIST_VERSION}
-    if cleaned_name is not None:
-        payload['name'] = cleaned_name
-    payload['entries'] = cleaned
 
-    final_path = os.path.join(channel_dir, PLAYLIST_FILENAME)
+def write_central_playlist(usb_root: str, channels: dict) -> None:
+    """Atomically write <usb_root>/playlist.json.
+
+    `channels` is keyed by integer channel number (1..13) with values of
+    shape `{'name': str|None, 'entries': [{'filename': str}, ...]}`.
+    Validates every entry; raises ValueError on bad input, OSError on
+    filesystem failures. Channels are sorted by integer key for stable
+    diffs across writes.
+    """
+    if not isinstance(channels, dict):
+        raise ValueError('channels must be a dict')
+    if not os.path.isdir(usb_root):
+        raise FileNotFoundError(usb_root)
+
+    cleaned_channels = {}
+    for key, val in channels.items():
+        try:
+            ch_num = int(key)
+        except (TypeError, ValueError):
+            raise ValueError(
+                'channel key must be an integer, got {0!r}'.format(key)
+            )
+        if ch_num < 1 or ch_num > 13:
+            raise ValueError('channel {0} out of range 1..13'.format(ch_num))
+        if not isinstance(val, dict):
+            raise ValueError(
+                'channel {0} value must be an object'.format(ch_num)
+            )
+        name = clean_name(val.get('name'))
+        raw_entries = val.get('entries', [])
+        if not isinstance(raw_entries, list):
+            raise ValueError(
+                'channel {0} entries must be a list'.format(ch_num)
+            )
+        ch_payload = {'entries': _validate_entries(raw_entries)}
+        if name is not None:
+            ch_payload['name'] = name
+        cleaned_channels[ch_num] = ch_payload
+
+    serial_channels = {
+        str(ch): cleaned_channels[ch] for ch in sorted(cleaned_channels)
+    }
+    payload = {'version': PLAYLIST_VERSION, 'channels': serial_channels}
+
+    final_path = os.path.join(usb_root, CENTRAL_PLAYLIST_FILENAME)
     fd, tmp_path = tempfile.mkstemp(prefix='.playlist-', suffix='.tmp',
-                                    dir=channel_dir)
+                                    dir=usb_root)
     try:
         with os.fdopen(fd, 'w') as f:
             json.dump(payload, f, indent=2)
@@ -199,31 +262,49 @@ def write_playlist_json(channel_dir: str, entries: Iterable, *,
         except OSError:
             pass
         raise
-    log.info('wrote %s with %d entries', final_path, len(cleaned))
+    populated = sum(1 for v in serial_channels.values() if v.get('entries'))
+    log.info('wrote %s (%d channels populated)', final_path, populated)
 
 
-def materialize(channel_dir: str, json_entries: list, usb_root: str,
-                duration_for_path: Callable[[str], float]) -> list:
-    """Build a list of Movies in JSON order from USB-root-relative paths.
+def materialize_channel(
+    usb_root: str,
+    entries: list,
+    duration_for_path: Callable[[str], float],
+) -> List[Movie]:
+    """Resolve each entry's filename against `usb_root` and return Movies.
 
-    Each entry's `path` is joined with `usb_root` to form an absolute path.
-    Missing files are dropped with a logged warning — they may have been
-    deleted or moved; we don't crash. `duration_for_path` is invoked per
-    surviving entry to obtain a duration in seconds (callers typically
-    cache or short-circuit so identical files aren't probed twice).
-
-    Each entry plays exactly once per loop iteration; users add a
-    duplicate entry to repeat a clip.
+    Drops missing files with a logged warning. Defends against symlink
+    escape: realpath of the resolved file must stay under realpath of
+    the USB root. `duration_for_path` is invoked per surviving entry
+    (callers typically cache so identical paths aren't probed twice).
     """
     out = []
-    for entry in json_entries:
-        rel = entry['path']
-        abs_path = os.path.join(usb_root, rel)
-        if not os.path.isfile(abs_path):
-            log.warning('playlist.json in %s references missing file: %s',
-                        channel_dir, rel)
+    try:
+        root_real = os.path.realpath(usb_root)
+    except OSError as e:
+        log.warning('usb_root %s does not resolve: %s', usb_root, e)
+        return out
+    root_prefix = root_real.rstrip('/') + os.sep
+
+    for entry in entries:
+        rel = entry.get('filename') if isinstance(entry, dict) else None
+        if not isinstance(rel, str) or not rel:
+            log.warning('skipping entry without filename: %r', entry)
             continue
-        title = os.path.splitext(os.path.basename(abs_path))[0]
-        duration = duration_for_path(abs_path)
-        out.append(Movie(abs_path, title, 1, duration))
+        abs_path = os.path.join(usb_root, rel)
+        try:
+            real = os.path.realpath(abs_path)
+        except OSError as e:
+            log.warning('failed to resolve %s: %s', abs_path, e)
+            continue
+        if real != root_real and not real.startswith(root_prefix):
+            log.warning('refusing to materialize %s: escapes %s',
+                        abs_path, root_real)
+            continue
+        if not os.path.isfile(real):
+            log.warning('missing file %s skipped', rel)
+            continue
+        title = os.path.splitext(os.path.basename(real))[0]
+        duration = duration_for_path(real)
+        out.append(Movie(real, title, 1, duration))
     return out

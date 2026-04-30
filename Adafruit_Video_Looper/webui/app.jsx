@@ -23,8 +23,8 @@ function basenameOf(path) {
 
 function decorateEntry(e, ch) {
   return {
-    path: e.path,
-    displayName: basenameOf(e.path),
+    filename: e.filename,
+    displayName: basenameOf(e.filename),
     durationSec: e.durationSec || 0,
     fileType: e.fileType,
     _uid: newUid(`s${ch}`),
@@ -52,16 +52,6 @@ function buildInitialPositions(channelData) {
         positionSec: info.current.positionSec,
         durationSec: info.current.durationSec,
       };
-    }
-  }
-  return out;
-}
-
-function buildChannelDirs(channelData) {
-  const out = {};
-  for (const [chStr, info] of Object.entries(channelData || {})) {
-    if (info && info.channelDir) {
-      out[parseInt(chStr, 10)] = info.channelDir;
     }
   }
   return out;
@@ -102,11 +92,11 @@ function App() {
   const [positionsByChannel, setPositionsByChannel] = useState(
     () => buildInitialPositions(initialState.broadcast.channels)
   );
-  const [channelDirs, setChannelDirs] = useState(
-    () => buildChannelDirs(initialState.broadcast.channels)
-  );
   const [channelNames, setChannelNames] = useState(
     () => buildChannelNames(initialState.broadcast.channels)
+  );
+  const [activeUsbRoot, setActiveUsbRoot] = useState(
+    initialState.activeUsbRoot || null
   );
   const [editingChannel, setEditingChannel] = useState(null);
   const [editingChannelValue, setEditingChannelValue] = useState('');
@@ -184,8 +174,8 @@ function App() {
           .then(([st, p, store]) => {
             setPlaylists(buildInitialPlaylists(st.broadcast.channels));
             setPositionsByChannel(buildInitialPositions(st.broadcast.channels));
-            setChannelDirs(buildChannelDirs(st.broadcast.channels));
             setChannelNames(buildChannelNames(st.broadcast.channels));
+            setActiveUsbRoot(st.activeUsbRoot || null);
             setCurrentChannel(st.currentChannel);
             setActivePlayer(st.activePlayer);
             setPlaybackStopped(st.playbackStopped);
@@ -204,8 +194,8 @@ function App() {
         const st = env.payload;
         setPlaylists(buildInitialPlaylists(st.broadcast.channels));
         setPositionsByChannel(buildInitialPositions(st.broadcast.channels));
-        setChannelDirs(buildChannelDirs(st.broadcast.channels));
         setChannelNames(buildChannelNames(st.broadcast.channels));
+        setActiveUsbRoot(st.activeUsbRoot || null);
         setCurrentChannel(st.currentChannel);
         setActivePlayer(st.activePlayer);
         setPlaybackStopped(st.playbackStopped);
@@ -300,7 +290,7 @@ function App() {
 
   // ─── Playlist mutations ───
   const persistPlaylist = (chan, items) => {
-    const entries = items.map(e => ({ path: e.path }));
+    const entries = items.map(e => ({ filename: e.filename }));
     return API.savePlaylist(chan, entries).catch(err => {
       console.warn('savePlaylist failed', chan, err);
       API.getPlaylist(chan).then(({ entries: server }) => {
@@ -335,7 +325,7 @@ function App() {
       return next;
     });
     const items = playlists[chan] || [];
-    const entries = items.map(e => ({ path: e.path }));
+    const entries = items.map(e => ({ filename: e.filename }));
     // Empty string clears the name on the server.
     API.savePlaylist(chan, entries, trimmed).catch(err => {
       console.warn('rename channel failed', chan, err);
@@ -375,12 +365,12 @@ function App() {
   };
 
   const handleAddPoolItem = async (chan, poolItem, idx) => {
-    if (!channelDirs[chan]) {
-      window.alert(`Channel ${chan} has no folder on the USB drive.`);
+    if (!activeUsbRoot) {
+      window.alert('No USB drive is mounted — connect a drive to add files.');
       return;
     }
     const newEntry = {
-      path: poolItem.relPath,
+      filename: poolItem.relPath,
       displayName: basenameOf(poolItem.relPath),
       durationSec: poolItem.durationSec || 0,
       fileType: poolItem.fileType,
@@ -516,7 +506,7 @@ function App() {
     const s = new Set();
     for (const ch of CHANNELS) {
       for (const entry of (playlists[ch.num] || [])) {
-        if (entry.path) s.add(entry.path);
+        if (entry.filename) s.add(entry.filename);
       }
     }
     return s;
@@ -718,6 +708,7 @@ function App() {
         onClose={() => setSettingsOpen(false)}
         config={config}
         storage={storage}
+        activeUsbRoot={activeUsbRoot}
         onSave={(c) => { setSettingsOpen(false); handleSaveConfig(c); }}
         onReboot={() => { setSettingsOpen(false); handleReboot(); }}
         restarting={restarting}

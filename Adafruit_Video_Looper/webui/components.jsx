@@ -604,7 +604,8 @@ function FolderContextMenu({ x, y, node, fileCount, usedCount, onRename, onDelet
 }
 
 // ─────────── Settings Modal — looper INI editor ───────────
-function SettingsModal({ open, onClose, config, storage, onSave, onReboot, restarting,
+function SettingsModal({ open, onClose, config, storage, activeUsbRoot,
+                         onSave, onReboot, restarting,
                          timelineScale, onTimelineScaleChange }) {
   const [draft, setDraft] = React.useState(() => deepClone(config));
   React.useEffect(() => { setDraft(deepClone(config)); }, [config, open]);
@@ -762,6 +763,12 @@ function SettingsModal({ open, onClose, config, storage, onSave, onReboot, resta
                 <div><EngravedLabel size="xs">FREE</EngravedLabel><div className="storage-num">{fmtBytes(storage.free)}</div></div>
                 <div><EngravedLabel size="xs">TOTAL</EngravedLabel><div className="storage-num">{fmtBytes(storage.total)}</div></div>
                 <div><EngravedLabel size="xs">FILES</EngravedLabel><div className="storage-num">{storage.files}</div></div>
+              </div>
+              <div className="cfg-row">
+                <span>USB</span>
+                <div className="storage-num" style={{textAlign:'right'}}>
+                  {activeUsbRoot || '— NONE —'}
+                </div>
               </div>
             </section>
           )}

@@ -83,6 +83,10 @@ class ProcessManager:
         self._broadcast_manager = None
         self._current_channel = 2  # Start on channel 2
         self._broadcast_start_time = time.time()
+        # USB mount holding the central playlist.json. Populated by
+        # _build_broadcast_channels; consumed by the web layer for reads,
+        # writes, and uploads. None when no USB is mounted.
+        self._active_usb_root: Optional[str] = None
 
         # Build combined extensions from all players
         all_extensions = []
@@ -242,16 +246,41 @@ class ProcessManager:
         return Playlist(sorted(movies))
 
     def _build_broadcast_channels(self):
-        """Build broadcast TV-style channels."""
-        if not hasattr(self._reader, 'search_channel_paths'):
+        """Build broadcast TV-style channels from a central playlist.json.
+
+        Iterates every USB mount and picks the first one whose
+        `playlist.json` parses as v4. Each channel 1..13 is materialized
+        from that file's `channels` map; channels not present in the
+        file (or with empty entries) start as empty Playlists. Channel 1
+        is unmapped per existing convention.
+
+        With at least one USB mounted, broadcast mode is always active —
+        the user populates channels via the web UI and the act of
+        saving creates the central file on first write.
+        """
+        if not hasattr(self._reader, 'search_paths'):
             log.info('channel mode not supported by file reader')
             return None
-
-        channel_paths = self._reader.search_channel_paths()
-
-        if len(channel_paths) == 0:
-            log.info('no channel folders found')
+        mount_paths = self._reader.search_paths()
+        if not mount_paths:
+            log.info('no usb mount found; broadcast mode unavailable')
+            self._active_usb_root = None
             return None
+
+        central = None
+        chosen_root = None
+        for usb_root in mount_paths:
+            data = playlist_io.read_central_playlist(usb_root)
+            if data is not None:
+                chosen_root = usb_root
+                central = data
+                break
+        if chosen_root is None:
+            chosen_root = mount_paths[0]
+        self._active_usb_root = chosen_root
+
+        log.info('using broadcast TV mode (root=%s, central-file=%s)',
+                 chosen_root, 'present' if central else 'absent')
 
         manager = BroadcastChannelManager(self._broadcast_start_time)
         default_duration = self._get_video_duration(DEFAULT_VIDEO_PATH)
@@ -259,48 +288,30 @@ class ProcessManager:
             Movie(DEFAULT_VIDEO_PATH, 'default', 1, default_duration)
         )
 
-        log.info('building broadcast channels')
+        central_channels = central['channels'] if central else {}
 
         for channel_num in range(1, 14):
-            if channel_num in channel_paths:
-                channel_dir = channel_paths[channel_num]
-                log.info('channel %d:', channel_num)
-                # Alpha-scan still runs unconditionally — it reads the
-                # per-channel volume override file as a side effect, and
-                # its precomputed durations seed the cache below so
-                # files that happen to live in the channel folder don't
-                # need a second ffprobe.
-                movies = self._get_movies_from_path(channel_dir)
-                duration_by_path = {m.target: m.duration for m in movies}
-
-                def duration_for_path(p, _cache=duration_by_path):
-                    if p in _cache:
-                        return _cache[p]
-                    return self._get_video_duration(p)
-
-                # If a playlist.json is present in the channel folder, it
-                # is the source of truth (web UI writes it). Otherwise
-                # fall back to alphabetical sort (legacy behavior).
-                json_entries = playlist_io.read_playlist_json(channel_dir)
-                if json_entries is not None:
-                    usb_root = os.path.dirname(channel_dir.rstrip('/'))
-                    ordered = playlist_io.materialize(
-                        channel_dir, json_entries, usb_root, duration_for_path,
-                    )
-                    playlist = Playlist(ordered)
-                    source = 'json'
-                else:
-                    playlist = Playlist(sorted(movies))
-                    source = 'alpha'
-
-                manager.set_channel_playlist(channel_num, playlist)
-
-                total_duration = sum(m.duration for m in playlist._movies)
-                log.info('  source=%s total: %d files, %ds loop',
-                         source, playlist.length(), int(total_duration))
+            ch_data = central_channels.get(channel_num)
+            entries = ch_data.get('entries') if ch_data else []
+            if entries:
+                movies = playlist_io.materialize_channel(
+                    chosen_root, entries, self._get_video_duration,
+                )
+                playlist = Playlist(movies)
+            else:
+                playlist = Playlist([])
+            manager.set_channel_playlist(channel_num, playlist)
+            total_duration = sum(m.duration for m in playlist._movies)
+            log.info('channel %d: %d entries (%ds loop)',
+                     channel_num, playlist.length(), int(total_duration))
 
         manager.set_default_playlist(Playlist([]))
         return manager
+
+    @property
+    def active_usb_root(self) -> Optional[str]:
+        """USB mount holding the central playlist.json (or None)."""
+        return self._active_usb_root
 
     def _publish_channel_intent(self, channel, previous_channel):
         """Called from the encoder polling thread. Publishes a channel
