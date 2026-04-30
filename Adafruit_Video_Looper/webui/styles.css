@@ -1660,7 +1660,7 @@ input, textarea, [contenteditable="true"], .log-drawer-body {
   outline-offset: -1px;
 }
 .tl-chan-cell.is-current {
-  background: rgba(255, 179, 71, 0.06);
+  background-image: linear-gradient(rgba(255, 179, 71, 0.06), rgba(255, 179, 71, 0.06));
 }
 .tl-chan-cell.is-current .tl-chan-digit {
   color: var(--phosphor, #ffb347);
