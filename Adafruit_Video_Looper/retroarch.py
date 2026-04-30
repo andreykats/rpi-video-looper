@@ -59,24 +59,17 @@ class RetroArchPlayer:
         """Return list of supported file extensions."""
         return self._extensions
 
-    def _in_grace_period(self):
-        """Check if we're still in the startup grace period."""
-        return time.time() - self._play_requested_time < 2.0
-
     def play(self, movie, loop=None, vol=0, seek_position=None):
         """Start RetroArch with the provided ROM file.
 
         Note: loop, vol, and seek_position are ignored for ROMs.
         """
-        # During grace period, don't try to restart or send commands
-        if self._in_grace_period():
-            log.info('ignoring play() during startup grace period')
-            return
-
         # Same ROM still running — nothing to do. RetroArch's network control
         # interface has no command to load different content, so any other
-        # ROM change requires a kill+respawn.
-        if self.is_playing() and self._current_rom == movie.target:
+        # ROM change requires a kill+respawn (handled below). _current_rom
+        # is the dedupe key; we no longer block on a startup grace window
+        # because that silently dropped legitimate fast channel switches.
+        if self._current_rom == movie.target and self.is_playing():
             return
 
         self.stop()
