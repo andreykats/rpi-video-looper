@@ -1,12 +1,10 @@
 import logging
 import os
 import pwd
-import socket
 import subprocess
 import time
 
 OVERRIDE_CONFIG_PATH = '/tmp/retroarch-video-looper.cfg'
-RETROARCH_CMD_PORT = 55355
 
 log = logging.getLogger('looper.retroarch')
 
@@ -29,6 +27,7 @@ class RetroArchPlayer:
         """Create an instance of a player that runs RetroArch in the background."""
         self._process = None
         self._play_requested_time = 0  # Prevent duplicate plays during startup
+        self._current_rom = None
         self._load_config(config)
 
     def _load_config(self, config):
@@ -60,30 +59,6 @@ class RetroArchPlayer:
         """Return list of supported file extensions."""
         return self._extensions
 
-    def _send_udp_command(self, command):
-        """Send command to RetroArch via UDP network interface."""
-        try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            sock.settimeout(0.1)
-            sock.sendto(command.encode(), ('127.0.0.1', RETROARCH_CMD_PORT))
-            sock.close()
-            return True
-        except Exception:
-            return False
-
-    def _load_via_network(self, rom_path, filename):
-        """Load new ROM via network command without restarting RetroArch.
-
-        Returns True if successful, False if command failed.
-        """
-        try:
-            if self._send_udp_command('LOAD_CONTENT {}'.format(rom_path)):
-                log.info('network-load file=%s', filename)
-                return True
-            return False
-        except Exception:
-            return False
-
     def _in_grace_period(self):
         """Check if we're still in the startup grace period."""
         return time.time() - self._play_requested_time < 2.0
@@ -98,14 +73,12 @@ class RetroArchPlayer:
             log.info('ignoring play() during startup grace period')
             return
 
-        # Try network command if RetroArch is already running (fast ROM switching)
-        if self.is_playing():
-            if self._load_via_network(movie.target, movie.filename):
-                return  # Success - no need to restart
-            # Network command failed - fall through to kill and restart
-            log.warning('network command failed, will restart')
+        # Same ROM still running — nothing to do. RetroArch's network control
+        # interface has no command to load different content, so any other
+        # ROM change requires a kill+respawn.
+        if self.is_playing() and self._current_rom == movie.target:
+            return
 
-        # Kill and restart RetroArch
         self.stop()
 
         # Mark play as requested to prevent duplicate calls during startup
@@ -154,6 +127,7 @@ class RetroArchPlayer:
                 close_fds=True,
                 env=env,
             )
+            self._current_rom = movie.target
             log.info('start pid=%d file=%s seek=0',
                      self._process.pid, movie.filename)
         finally:
@@ -184,9 +158,6 @@ class RetroArchPlayer:
             # Save states
             'savestate_auto_load = "{}"'.format(savestate_auto_load),
             'autosave_interval = {}'.format(self._autosave_interval),
-            # Enable network commands for fast ROM switching
-            'network_cmd_enable = "true"',
-            'network_cmd_port = "{}"'.format(RETROARCH_CMD_PORT),
             # Disable on-screen display notifications
             'video_font_enable = "false"',
             'onscreen_notifications_enable = "false"',
@@ -262,6 +233,7 @@ class RetroArchPlayer:
                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         log.info('stop reason=kill')
         self._process = None
+        self._current_rom = None
 
     @staticmethod
     def can_loop_count():

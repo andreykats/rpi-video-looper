@@ -365,9 +365,9 @@ class ProcessManager:
 
     # Reconcile window — after a launch, watch for newer publishes for
     # this long. Subsequent intents during the window switch the player
-    # again (fast: MPV uses IPC loadfile, RetroArch uses LOAD_CONTENT
-    # over UDP). Cost is one extra launch per channel touched during a
-    # spin; benefit is zero added latency on isolated clicks.
+    # again (MPV uses IPC loadfile; RetroArch kills and respawns). Cost
+    # is one extra launch per channel touched during a spin; benefit is
+    # zero added latency on isolated clicks.
     _CHANNEL_RECONCILE_S = 0.15
 
     def _channel_worker(self):

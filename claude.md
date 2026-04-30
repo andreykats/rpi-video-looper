@@ -118,7 +118,7 @@ Video playback using MPV with DRM/KMS output:
 NES emulation using RetroArch:
 - Uses `gl` video driver with `kms` context for framebuffer output
 - Nestopia libretro core for NES/FDS/NSF files
-- UDP network commands (port 55355) for ROM switching
+- ROM switching is kill+respawn — RetroArch's Network Control Interface has no `LOAD_CONTENT` (or equivalent) command, so a different ROM cannot be loaded into a running process. `_current_rom` tracks the active ROM path so a redundant `play()` for the same ROM is a no-op.
 - 2-second startup grace period
 - **Critical**: `stop()` must use blocking `subprocess.run()` (not `Popen`) to avoid race condition where pkill kills newly-started process
 - `pkill` is PID-scoped (`pkill -P <looper_pid>`) so unrelated retroarch processes on the box aren't disturbed
@@ -129,8 +129,6 @@ video_driver = "gl"
 video_context_driver = "kms"
 audio_driver = "alsa"
 input_driver = "udev"
-network_cmd_enable = "true"
-network_cmd_port = "55355"
 ```
 
 ## Hardware Integration
