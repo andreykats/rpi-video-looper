@@ -643,10 +643,10 @@ function App() {
               onClick={() => setLogOpen(o => !o)}
             />
             <HwButton label="▶ SYNC" color="green" disabled />
-            <HwButton label="● RBC" color="red"
+            <HwButton label="● RBC" color="blue"
               onClick={handleResetBroadcast}
               disabled={restarting} />
-            <HwButton label="⟳ REBOOT" color="beige" onClick={() => {
+            <HwButton label="● REBOOT" color="red" onClick={() => {
               if (window.confirm('Reboot the Pi? The looper and the web UI will go down for ~30 seconds.')) {
                 handleReboot();
               }

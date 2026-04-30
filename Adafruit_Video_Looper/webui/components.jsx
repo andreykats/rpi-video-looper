@@ -43,6 +43,7 @@ function HwButton({ label, color = 'beige', lit = false, onClick, disabled = fal
     orange: { face: '#d97740', edge: '#a85020', text: '#1a0f08' },
     red:    { face: '#b83828', edge: '#7a1f12', text: '#fff' },
     green:  { face: '#3d7a3d', edge: '#1f4a1f', text: '#fff' },
+    blue:   { face: '#3a6a9c', edge: '#1c3858', text: '#fff' },
     black:  { face: '#25272b', edge: '#0e1014', text: '#c8ccd0' },
   };
   const c = palette[color];
