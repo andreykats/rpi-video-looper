@@ -1012,6 +1012,12 @@ input, textarea, [contenteditable="true"], .log-drawer-body {
 }
 
 /* Timeline rows */
+.tl-rows-wrap {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
 .tl-row-wrap {
   border-bottom: 1px solid #3a3e42;
   min-height: 46px;
