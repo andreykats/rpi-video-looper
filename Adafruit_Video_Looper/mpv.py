@@ -345,6 +345,11 @@ class MPVPlayer:
         args.extend(['--idle=yes'])
         args.extend(['--image-display-duration=inf'])
 
+        # No subtitles, ever — retro-TV simulator. Disables both embedded
+        # tracks (--sid=no) and auto-loading of sidecar .srt/.ass files.
+        args.extend(['--sid=no'])
+        args.extend(['--sub-auto=no'])
+
         # Force ALSA when the config selects an HDMI/local/alsa output. mpv's
         # default autodetection probes PipeWire and JACK first; on this Pi
         # neither is running, and PipeWire's failure path can wedge the ALSA
