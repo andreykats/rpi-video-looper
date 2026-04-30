@@ -120,8 +120,10 @@ NES emulation using RetroArch:
 - Nestopia libretro core for NES/FDS/NSF files
 - ROM switching is kill+respawn — RetroArch's Network Control Interface has no `LOAD_CONTENT` (or equivalent) command, so a different ROM cannot be loaded into a running process. `_current_rom` tracks the active ROM path so a redundant `play()` for the same ROM is a no-op.
 - 2-second startup grace period
-- **Critical**: `stop()` must use blocking `subprocess.run()` (not `Popen`) to avoid race condition where pkill kills newly-started process
+- `stop()` is **SIGTERM-then-SIGKILL** with a 1.0s grace window (configurable via `[retroarch] stop_grace_seconds`). The graceful term is what makes `savestate_auto_save = true` actually flush a `.auto` file on channel switch — pair with `savestate_auto_load = true` (default) for resume-on-return.
+- **Critical**: the pkill sweep after the kill must use blocking `subprocess.run()` (not `Popen`) to avoid race condition where pkill kills newly-started process
 - `pkill` is PID-scoped (`pkill -P <looper_pid>`) so unrelated retroarch processes on the box aren't disturbed
+- Save-state controller bindings: optional `[retroarch] save_state_btn` / `load_state_btn` / `enable_hotkey_btn` (joypad button indices). Empty by default; emitted into the override config only when set.
 
 Config written to `/tmp/retroarch-video-looper.cfg`:
 ```ini

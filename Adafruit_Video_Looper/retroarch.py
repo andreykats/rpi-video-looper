@@ -46,6 +46,13 @@ class RetroArchPlayer:
         self._audio_enable = config.getboolean('retroarch', 'audio_enable', fallback=True)
         self._autosave_interval = config.getint('retroarch', 'autosave_interval', fallback=0)
         self._savestate_auto_load = config.getboolean('retroarch', 'savestate_auto_load', fallback=True)
+        self._savestate_auto_save = config.getboolean('retroarch', 'savestate_auto_save', fallback=False)
+        self._savestate_directory = config.get('retroarch', 'savestate_directory', fallback='').strip()
+        self._state_slot = config.getint('retroarch', 'state_slot', fallback=0)
+        self._save_state_btn = config.get('retroarch', 'save_state_btn', fallback='').strip()
+        self._load_state_btn = config.get('retroarch', 'load_state_btn', fallback='').strip()
+        self._enable_hotkey_btn = config.get('retroarch', 'enable_hotkey_btn', fallback='').strip()
+        self._stop_grace_seconds = config.getfloat('retroarch', 'stop_grace_seconds', fallback=1.0)
         self._verbose = config.getboolean('retroarch', 'verbose', fallback=False)
         # Pinning the fullscreen mode keeps RetroArch from picking a different
         # HDMI timing than mpv / the kernel boot mode, which would force the
@@ -150,11 +157,21 @@ class RetroArchPlayer:
             'audio_enable = "{}"'.format(audio_enable),
             # Save states
             'savestate_auto_load = "{}"'.format(savestate_auto_load),
+            'savestate_auto_save = "{}"'.format('true' if self._savestate_auto_save else 'false'),
+            'state_slot = "{}"'.format(self._state_slot),
             'autosave_interval = {}'.format(self._autosave_interval),
             # Disable on-screen display notifications
             'video_font_enable = "false"',
             'onscreen_notifications_enable = "false"',
         ]
+        if self._savestate_directory:
+            lines.append('savestate_directory = "{}"'.format(self._savestate_directory))
+        if self._save_state_btn:
+            lines.append('input_save_state_btn = "{}"'.format(self._save_state_btn))
+        if self._load_state_btn:
+            lines.append('input_load_state_btn = "{}"'.format(self._load_state_btn))
+        if self._enable_hotkey_btn:
+            lines.append('input_enable_hotkey_btn = "{}"'.format(self._enable_hotkey_btn))
         if self._fullscreen_width:
             lines.append('video_fullscreen_x = "{}"'.format(self._fullscreen_width))
         if self._fullscreen_height:
@@ -210,13 +227,21 @@ class RetroArchPlayer:
         self._play_requested_time = 0
         _blank_console()
 
-        # Kill by PID first so we don't depend on /proc/cmdline being set
-        # (right after fork+exec, name-based pkill can miss the process).
+        # SIGTERM first so RetroArch's shutdown handler runs — that's what
+        # flushes savestate_auto_save (.auto file) on channel-change. Fall
+        # back to SIGKILL if it doesn't exit within the grace window.
         process = self._process
         if process is not None:
             try:
-                process.kill()
-                process.wait(timeout=0.2)
+                process.terminate()
+                process.wait(timeout=self._stop_grace_seconds)
+            except subprocess.TimeoutExpired:
+                log.warning('graceful stop timed out after %.1fs, killing', self._stop_grace_seconds)
+                try:
+                    process.kill()
+                    process.wait(timeout=0.2)
+                except Exception:
+                    pass
             except Exception:
                 pass
 

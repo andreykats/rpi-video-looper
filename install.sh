@@ -35,7 +35,7 @@ pip3 install .
 # Create required directories
 mkdir -p /mnt/usbdrive0
 mkdir -p /home/pi/video
-mkdir -p /var/lib/video_looper
+mkdir -p /var/lib/video_looper /var/lib/video_looper/savestates
 
 # Copy configuration files
 cp ./assets/video_looper.ini /boot/video_looper.ini
