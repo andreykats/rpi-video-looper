@@ -584,6 +584,26 @@ def _is_currently_playing(pm, target: Path) -> bool:
         return False
 
 
+def _folder_contains_playing(pm, folder: Path) -> bool:
+    """True if the currently-playing file lives anywhere under `folder`."""
+    bm = pm._broadcast_manager
+    if bm is None:
+        return False
+    pl = bm._channel_playlists.get(pm._current_channel)
+    if pl is None or pl.length() == 0:
+        return False
+    selection = bm.calculate_broadcast_position(pm._current_channel)
+    movie = selection.movie
+    if movie is None or selection.hidden:
+        return False
+    try:
+        active = Path(movie.target).resolve(strict=False)
+        active.relative_to(folder)
+        return True
+    except (OSError, ValueError):
+        return False
+
+
 # ---------- REST handlers ----------
 
 async def state_handler(request: Request):
@@ -1141,6 +1161,12 @@ async def post_folder_rename_handler(request: Request):
         return JSONResponse({'ok': False, 'error': 'protected-path'}, status_code=403)
     if not target.is_dir():
         return JSONResponse({'ok': False, 'error': 'not-a-dir'}, status_code=400)
+    if _folder_contains_playing(pm, target):
+        return JSONResponse({
+            'ok': False,
+            'error': 'playback-conflict',
+            'hint': 'Switch channels before renaming a folder containing the active file.',
+        }, status_code=409)
     new_path = target.parent / new_name
     if new_path.exists():
         return JSONResponse({'ok': False, 'error': 'name-exists'}, status_code=409)
@@ -1193,6 +1219,12 @@ async def post_folder_delete_handler(request: Request):
         return JSONResponse({'ok': False, 'error': 'protected-path'}, status_code=403)
     if not target.is_dir():
         return JSONResponse({'ok': False, 'error': 'not-a-dir'}, status_code=400)
+    if _folder_contains_playing(pm, target):
+        return JSONResponse({
+            'ok': False,
+            'error': 'playback-conflict',
+            'hint': 'Switch channels before deleting a folder containing the active file.',
+        }, status_code=409)
     src_usb = _usb_root_for(target)
     try:
         shutil.rmtree(target)
