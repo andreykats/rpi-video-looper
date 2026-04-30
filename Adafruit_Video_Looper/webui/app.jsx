@@ -706,8 +706,8 @@ function App() {
               {[...Array(40)].map((_,i) => <span key={i} />)}
             </div>
             <div className="vent-info">
-              <EngravedLabel size="xs">DBL-CLICK CLIP TO REMOVE · DRAG TO MOVE BETWEEN CHANNELS · DRAG FROM LIBRARY TO ADD</EngravedLabel>
-              <span className="vent-serial">CHANNEL CHANGES VIA ROTARY ENCODER ONLY</span>
+              <EngravedLabel size="xs">DRAG FROM LIBRARY TO ADD · DRAG TO MOVE BETWEEN CHANNELS · RIGHT-CLICK CLIP TO EJECT</EngravedLabel>
+              <span className="vent-serial">CHANGES CHANNEL VIA TV TUNER</span>
             </div>
           </div>
         </section>
