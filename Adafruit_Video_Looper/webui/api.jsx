@@ -31,12 +31,12 @@ const API = {
   getStorage: () => apiGet('/api/storage'),
   getPlaylist: (ch) => apiGet(`/api/playlist/${ch}`),
   savePlaylist: (ch, entries, name) => {
-    // Server expects {filename} per entry (schema v3 — repeat is gone;
-    // duplicates encode repetition). Omit `name` when undefined so the
+    // Server expects {path} per entry (schema v4 — USB-root-relative).
+    // Duplicates encode repetition. Omit `name` when undefined so the
     // server preserves the existing value (drag-reorder shouldn't wipe
     // a user-set channel name).
     const body = {
-      entries: entries.map(e => ({ filename: e.filename })),
+      entries: entries.map(e => ({ path: e.path })),
     };
     if (name !== undefined) body.name = name;
     return apiPost(`/api/playlist/${ch}`, body);

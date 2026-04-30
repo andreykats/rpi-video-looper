@@ -144,6 +144,33 @@ def _safe_resolve(path_str: str) -> Optional[Path]:
     return None
 
 
+def _usb_root_for(target: Path) -> Optional[Path]:
+    """Return the USB mount root that contains `target`, or None."""
+    for r in _usb_roots_resolved():
+        try:
+            target.relative_to(r)
+            return r
+        except ValueError:
+            continue
+    return None
+
+
+def _rel_under_usb(abs_path: str, usb_root: str) -> str:
+    """Strip `usb_root` from `abs_path`, returning a USB-relative POSIX path.
+
+    Falls back to the basename when the path isn't under usb_root — that
+    shouldn't happen for valid Movies but the fallback keeps the wire
+    payload non-empty for diagnostics.
+    """
+    root = usb_root.rstrip('/')
+    if abs_path == root:
+        return ''
+    prefix = root + '/'
+    if abs_path.startswith(prefix):
+        return abs_path[len(prefix):]
+    return os.path.basename(abs_path)
+
+
 def _is_protected(target: Path) -> bool:
     """The USB mount root itself or a numbered channel root (1..13)."""
     for r in _usb_roots_resolved():
@@ -466,8 +493,12 @@ def _build_state_snapshot(pm) -> dict:
             log.warning('search_channel_paths failed: %s', e)
     if bm is not None:
         for ch_num, pl in bm._channel_playlists.items():
+            ch_dir_for_entries = channel_paths.get(ch_num, '')
+            ch_usb_root = (os.path.dirname(ch_dir_for_entries.rstrip('/'))
+                           if ch_dir_for_entries else '')
             entries = [{
-                'filename': m.filename,
+                'path': (_rel_under_usb(m.target, ch_usb_root)
+                         if ch_usb_root else m.filename),
                 'durationSec': m.duration,
                 'fileType': m.content_type,
             } for m in pl._movies]
@@ -600,13 +631,16 @@ async def get_playlist_handler(request: Request):
     pl = bm._channel_playlists.get(ch)
     if pl is None:
         return JSONResponse({'channel': ch, 'entries': [], 'name': None})
+    channel_dir = _channel_dir_for(ch)
+    ch_usb_root = (os.path.dirname(channel_dir.rstrip('/'))
+                   if channel_dir else '')
     entries = [{
-        'filename': m.filename,
+        'path': (_rel_under_usb(m.target, ch_usb_root)
+                 if ch_usb_root else m.filename),
         'durationSec': m.duration,
         'fileType': m.content_type,
     } for m in pl._movies]
     name = None
-    channel_dir = _channel_dir_for(ch)
     if channel_dir is not None:
         meta = playlist_io.read_playlist_meta(channel_dir)
         if meta is not None:
@@ -662,26 +696,28 @@ async def post_playlist_handler(request: Request):
         if existing_meta is not None:
             name_kw['name'] = existing_meta['name']
 
-    try:
-        existing = set(os.listdir(channel_dir))
-    except OSError as e:
-        return JSONResponse(
-            {'ok': False, 'error': 'read-failed', 'detail': str(e)},
-            status_code=500,
-        )
+    ch_usb_root = os.path.dirname(channel_dir.rstrip('/'))
 
     cleaned = []
     skipped = []
     for raw in raw_entries:
         if not isinstance(raw, dict):
             continue
-        fn = raw.get('filename')
-        if not isinstance(fn, str) or not fn or '/' in fn or fn in ('.', '..'):
+        rel = raw.get('path')
+        if not isinstance(rel, str) or not rel:
             continue
-        if fn not in existing:
-            skipped.append(fn)
+        # _safe_resolve also enforces USB-root containment + symlink safety.
+        target = _safe_resolve(os.path.join(ch_usb_root, rel))
+        if target is None or not target.is_file():
+            skipped.append(rel)
             continue
-        cleaned.append({'filename': fn})
+        # Re-derive the canonical relative path so symlinks/case differences
+        # are normalized away before hitting playlist.json.
+        canonical = _rel_under_usb(str(target), ch_usb_root)
+        if not canonical:
+            skipped.append(rel)
+            continue
+        cleaned.append({'path': canonical})
 
     try:
         playlist_io.write_playlist_json(channel_dir, cleaned, **name_kw)
@@ -718,7 +754,17 @@ def _build_playlist_from_disk(pm, channel_dir: str) -> Playlist:
     json_entries = playlist_io.read_playlist_json(channel_dir)
     if json_entries is None:
         return Playlist(sorted(movies))
-    return Playlist(playlist_io.materialize(channel_dir, movies, json_entries))
+    duration_by_path = {m.target: m.duration for m in movies}
+
+    def duration_for_path(p, _cache=duration_by_path):
+        if p in _cache:
+            return _cache[p]
+        return pm._get_video_duration(p)
+
+    usb_root = os.path.dirname(channel_dir.rstrip('/'))
+    return Playlist(playlist_io.materialize(
+        channel_dir, json_entries, usb_root, duration_for_path,
+    ))
 
 
 async def post_file_rename_handler(request: Request):
@@ -780,9 +826,13 @@ def _rewrite_playlist_after_filename_change(
 ) -> list:
     """Update playlist.json in `parent` to reflect a rename or delete.
 
-    `new_name=None` deletes entries matching `old_name`; otherwise renames
-    those entries' filename. Publishes a PlaylistIntent if the parent is
-    a numbered channel folder. Returns the channel numbers updated.
+    `new_name=None` deletes entries matching `parent/old_name`; otherwise
+    renames those entries' path to `parent/new_name`. Both old/new paths
+    are translated to USB-root-relative form before the comparison.
+
+    Stage 1: only rewrites the playlist that lives in `parent` itself
+    (when `parent` is a numbered channel folder). Stage 2 widens this to
+    walk every channel playlist on the same USB root.
     """
     json_path = parent / playlist_io.PLAYLIST_FILENAME
     if not json_path.exists():
@@ -790,12 +840,28 @@ def _rewrite_playlist_after_filename_change(
     meta = playlist_io.read_playlist_meta(str(parent))
     if meta is None:
         return []
-    ents = meta['entries']
+    usb_root = _usb_root_for(parent)
+    if usb_root is None:
+        return []
+    try:
+        old_rel = str((parent / old_name).resolve(strict=False)
+                      .relative_to(usb_root))
+    except ValueError:
+        return []
     if new_name is None:
-        new_ents = [e for e in ents if e['filename'] != old_name]
+        new_rel = None
+    else:
+        try:
+            new_rel = str((parent / new_name).resolve(strict=False)
+                          .relative_to(usb_root))
+        except ValueError:
+            return []
+    ents = meta['entries']
+    if new_rel is None:
+        new_ents = [e for e in ents if e['path'] != old_rel]
     else:
         new_ents = [
-            {'filename': new_name if e['filename'] == old_name else e['filename']}
+            {'path': new_rel if e['path'] == old_rel else e['path']}
             for e in ents
         ]
     if new_ents == ents:

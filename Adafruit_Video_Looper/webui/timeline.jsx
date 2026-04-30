@@ -7,11 +7,13 @@
 // across all rows so the user can read down to see what's playing on
 // each channel at any instant.
 //
-// Playlist entries arrive from the server with the shape:
-//   { filename, durationSec, fileType, _uid }
-// where _uid is a client-side counter we attach for stable React keys.
-// Each entry plays exactly once per loop iteration; users drag a clip
-// in twice to repeat it.
+// Playlist entries arrive from the server (path-based, schema v4) and
+// are decorated client-side into:
+//   { path, displayName, durationSec, fileType, _uid }
+// where _uid is a client-side counter we attach for stable React keys
+// and displayName is the basename of `path` for UI labels. Each entry
+// plays exactly once per loop iteration; users drag a clip in twice to
+// repeat it.
 
 const PX_PER_MAJOR_TICK = 200;    // visual density: each major tick spans 200px
 const MIN_ROW_WIDTH_PX  = 600;    // minimum row width when content is shorter than one tick
@@ -227,7 +229,7 @@ function ChannelTimeline({
                       const w = isNesClip ? totalPx : clipPxWidth(entry, pxPerSec);
                       return (
                         <ClipBlock
-                          key={entry._uid || `${entry.filename}-${i}`}
+                          key={entry._uid || `${entry.displayName}-${i}`}
                           entry={entry}
                           width={w}
                           isNes={isNesClip}
@@ -250,7 +252,7 @@ function ChannelTimeline({
                               fileType: entry.fileType,
                             };
                             e.dataTransfer.effectAllowed = 'move';
-                            e.dataTransfer.setData('text/plain', entry.filename);
+                            e.dataTransfer.setData('text/plain', entry.displayName);
                           }}
                         />
                       );
@@ -325,10 +327,10 @@ function ClipBlock({ entry, width, isNes, colorStripe, colorBg, onDoubleClick, o
         onDoubleClick={onDoubleClick}
         onContextMenu={onContextMenu}
         style={{ width }}
-        title={`${entry.filename} — interactive ROM (right-click to eject)`}>
+        title={`${entry.displayName} — interactive ROM (right-click to eject)`}>
         <div className="clip-nes-body">
           <span className="clip-nes-badge">NES</span>
-          <span className="clip-nes-name">{entry.filename}</span>
+          <span className="clip-nes-name">{entry.displayName}</span>
           <span className="clip-nes-tag">INTERACTIVE · FULL CHANNEL</span>
         </div>
       </div>
@@ -345,10 +347,10 @@ function ClipBlock({ entry, width, isNes, colorStripe, colorBg, onDoubleClick, o
       onDoubleClick={onDoubleClick}
       onContextMenu={onContextMenu}
       style={style}
-      title={`${entry.filename} — ${fmtDur(entry.durationSec)}`}>
+      title={`${entry.displayName} — ${fmtDur(entry.durationSec)}`}>
       <div className="clip-stripe" />
       <div className="clip-body">
-        {!tooSmall && <div className="clip-name">{entry.filename}</div>}
+        {!tooSmall && <div className="clip-name">{entry.displayName}</div>}
         {!tooSmall && (
           <div className="clip-dur">{fmtDur(entry.durationSec)}</div>
         )}
@@ -383,7 +385,7 @@ function ClipContextMenu({ x, y, entry, chan, onRemove, onClose }) {
       onContextMenu={(e) => e.preventDefault()}>
       <div className="pool-ctx-hd">
         <span className="pool-ctx-icon">▸</span>
-        <span className="pool-ctx-title" title={entry.filename}>{entry.filename}</span>
+        <span className="pool-ctx-title" title={entry.displayName}>{entry.displayName}</span>
       </div>
       <div className="pool-ctx-meta">
         CH {String(chan).padStart(2,'0')} · {entry.fileType === 'nes' ? 'NES ROM' : fmtDur(entry.durationSec)}

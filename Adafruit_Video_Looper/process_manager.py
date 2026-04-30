@@ -265,14 +265,28 @@ class ProcessManager:
             if channel_num in channel_paths:
                 channel_dir = channel_paths[channel_num]
                 log.info('channel %d:', channel_num)
+                # Alpha-scan still runs unconditionally — it reads the
+                # per-channel volume override file as a side effect, and
+                # its precomputed durations seed the cache below so
+                # files that happen to live in the channel folder don't
+                # need a second ffprobe.
                 movies = self._get_movies_from_path(channel_dir)
+                duration_by_path = {m.target: m.duration for m in movies}
+
+                def duration_for_path(p, _cache=duration_by_path):
+                    if p in _cache:
+                        return _cache[p]
+                    return self._get_video_duration(p)
 
                 # If a playlist.json is present in the channel folder, it
                 # is the source of truth (web UI writes it). Otherwise
                 # fall back to alphabetical sort (legacy behavior).
                 json_entries = playlist_io.read_playlist_json(channel_dir)
                 if json_entries is not None:
-                    ordered = playlist_io.materialize(channel_dir, movies, json_entries)
+                    usb_root = os.path.dirname(channel_dir.rstrip('/'))
+                    ordered = playlist_io.materialize(
+                        channel_dir, json_entries, usb_root, duration_for_path,
+                    )
                     playlist = Playlist(ordered)
                     source = 'json'
                 else:

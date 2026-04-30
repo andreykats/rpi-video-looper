@@ -15,16 +15,27 @@ window.TIMELINE_SCALE_OPTIONS = TIMELINE_SCALE_OPTIONS;
 let UID_COUNTER = 1;
 const newUid = (prefix) => `${prefix || 'u'}_${UID_COUNTER++}`;
 
+function basenameOf(path) {
+  if (!path) return '';
+  const i = path.lastIndexOf('/');
+  return i < 0 ? path : path.slice(i + 1);
+}
+
+function decorateEntry(e, ch) {
+  return {
+    path: e.path,
+    displayName: basenameOf(e.path),
+    durationSec: e.durationSec || 0,
+    fileType: e.fileType,
+    _uid: newUid(`s${ch}`),
+  };
+}
+
 function buildInitialPlaylists(channelData) {
   const out = {};
   for (const [chStr, info] of Object.entries(channelData || {})) {
     const ch = parseInt(chStr, 10);
-    out[ch] = (info.entries || []).map((e) => ({
-      filename: e.filename,
-      durationSec: e.durationSec || 0,
-      fileType: e.fileType,
-      _uid: newUid(`s${ch}`),
-    }));
+    out[ch] = (info.entries || []).map((e) => decorateEntry(e, ch));
   }
   return out;
 }
@@ -241,9 +252,7 @@ function App() {
         API.getPlaylist(env.channel).then(({ entries, name }) => {
           setPlaylists(p => ({
             ...p,
-            [env.channel]: (entries || []).map(e => ({
-              ...e, _uid: newUid(`r${env.channel}`),
-            })),
+            [env.channel]: (entries || []).map(e => decorateEntry(e, env.channel)),
           }));
           setChannelNames(prev => {
             const next = { ...prev };
@@ -291,13 +300,13 @@ function App() {
 
   // ─── Playlist mutations ───
   const persistPlaylist = (chan, items) => {
-    const entries = items.map(e => ({ filename: e.filename }));
+    const entries = items.map(e => ({ path: e.path }));
     return API.savePlaylist(chan, entries).catch(err => {
       console.warn('savePlaylist failed', chan, err);
       API.getPlaylist(chan).then(({ entries: server }) => {
         setPlaylists(p => ({
           ...p,
-          [chan]: (server || []).map(e => ({ ...e, _uid: newUid(`r${chan}`) })),
+          [chan]: (server || []).map(e => decorateEntry(e, chan)),
         }));
       }).catch(() => {});
     });
@@ -326,7 +335,7 @@ function App() {
       return next;
     });
     const items = playlists[chan] || [];
-    const entries = items.map(e => ({ filename: e.filename }));
+    const entries = items.map(e => ({ path: e.path }));
     // Empty string clears the name on the server.
     API.savePlaylist(chan, entries, trimmed).catch(err => {
       console.warn('rename channel failed', chan, err);
@@ -366,14 +375,13 @@ function App() {
   };
 
   const handleAddPoolItem = async (chan, poolItem, idx) => {
-    const channelDir = channelDirs[chan];
-    if (!channelDir) {
+    if (!channelDirs[chan]) {
       window.alert(`Channel ${chan} has no folder on the USB drive.`);
       return;
     }
-    const fileInChannel = poolItem.absParent === channelDir;
     const newEntry = {
-      filename: poolItem.name,
+      path: poolItem.relPath,
+      displayName: basenameOf(poolItem.relPath),
       durationSec: poolItem.durationSec || 0,
       fileType: poolItem.fileType,
       _uid: newUid('drop'),
@@ -389,9 +397,6 @@ function App() {
     });
 
     try {
-      if (!fileInChannel) {
-        await API.moveFile(poolItem.id, channelDir);
-      }
       await persistPlaylist(chan, nextItems);
     } catch (err) {
       console.warn('add to channel failed', err);
@@ -400,7 +405,7 @@ function App() {
       API.getPlaylist(chan).then(({ entries }) => {
         setPlaylists(p => ({
           ...p,
-          [chan]: (entries || []).map(e => ({ ...e, _uid: newUid(`r${chan}`) })),
+          [chan]: (entries || []).map(e => decorateEntry(e, chan)),
         }));
       }).catch(() => {});
     }
@@ -509,14 +514,12 @@ function App() {
   const usedIds = useMemo(() => {
     const s = new Set();
     for (const ch of CHANNELS) {
-      const dir = channelDirs[ch.num];
-      if (!dir) continue;
       for (const entry of (playlists[ch.num] || [])) {
-        s.add(`${dir}/${entry.filename}`);
+        if (entry.path) s.add(entry.path);
       }
     }
     return s;
-  }, [playlists, channelDirs]);
+  }, [playlists]);
 
   const phosphor = PHOSPHOR[t.phosphor] || PHOSPHOR.amber;
   const curPos = positionsByChannel[currentChannel];

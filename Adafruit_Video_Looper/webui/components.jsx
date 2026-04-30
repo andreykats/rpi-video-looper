@@ -138,7 +138,7 @@ function VideoPoolSidebar({ pool, uploads, uploadExtensions, onDragStart, usedId
     if (onDeleteFolder) onDeleteFolder(node.path);
   };
 
-  const filtered = pool.filter(v => !(hideUsed && usedIds && usedIds.has(v.id)));
+  const filtered = pool.filter(v => !(hideUsed && usedIds && usedIds.has(v.relPath)));
 
   const tree = React.useMemo(() => {
     return buildTreeFromList(filtered, sortBy);
@@ -225,7 +225,7 @@ function VideoPoolSidebar({ pool, uploads, uploadExtensions, onDragStart, usedId
           <>
             {node.childList.map(c => renderNode(c, depth + 1))}
             {node.files.map(v => {
-              const used = usedIds && usedIds.has(v.id);
+              const used = usedIds && usedIds.has(v.relPath);
               const isFileMenuTarget = menu && menu.kind === 'file' && menu.video.id === v.id;
               const isFileRenaming = renaming && renaming.kind === 'file' && renaming.key === v.id;
               return (
@@ -353,7 +353,7 @@ function VideoPoolSidebar({ pool, uploads, uploadExtensions, onDragStart, usedId
         {tree.childList.map(c => renderNode(c, 0))}
         {/* Files at the root mount level */}
         {tree.files && tree.files.map(v => {
-          const used = usedIds && usedIds.has(v.id);
+          const used = usedIds && usedIds.has(v.relPath);
           return (
             <div
               key={v.id}
@@ -378,7 +378,7 @@ function VideoPoolSidebar({ pool, uploads, uploadExtensions, onDragStart, usedId
         x={menu.x}
         y={menu.y}
         video={menu.video}
-        used={usedIds && usedIds.has(menu.video.id)}
+        used={usedIds && usedIds.has(menu.video.relPath)}
         onRename={() => startRenameFile(menu.video)}
         onDelete={() => handleDeleteFile(menu.video)}
         onClose={() => setMenu(null)}
@@ -512,8 +512,9 @@ function countFiles(node) {
 
 function countUsedInFolder(node, usedIds) {
   if (!usedIds) return 0;
+  // usedIds contains USB-root-relative paths (matching pool item .relPath).
   let n = 0;
-  for (const v of node.files) if (usedIds.has(v.id)) n++;
+  for (const v of node.files) if (usedIds.has(v.relPath)) n++;
   for (const c of node.childList) n += countUsedInFolder(c, usedIds);
   return n;
 }

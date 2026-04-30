@@ -35,9 +35,11 @@ const CHANNEL_COLORS = {
 };
 
 // Flatten the server's pool tree into a list suitable for the sidebar.
-// `id` is the absolute path (used by API calls). `path` is a display
-// path with the mount-root prefix stripped so the sidebar tree starts
-// at channel folders, not /mnt/usbdriveN.
+// `id` is the absolute path (used by API calls — rename/delete/move).
+// `path` is a display path with the mount-root prefix stripped so the
+// sidebar tree starts at channel folders, not /mnt/usbdriveN.
+// `relPath` is the file's USB-root-relative path (no leading slash) —
+// what the server stores in playlist.json.
 function flattenPool(serverPool) {
   // Sort longest-first so a file under /mnt/usbdrive10 isn't matched
   // against /mnt/usbdrive1's prefix.
@@ -57,6 +59,7 @@ function flattenPool(serverPool) {
         id: f.path,
         name: f.name,
         path: stripMount(node.path),
+        relPath: stripMount(f.path).replace(/^\//, ''),
         absParent: node.path,
         fileType: f.fileType,
         sizeBytes: f.sizeBytes,
