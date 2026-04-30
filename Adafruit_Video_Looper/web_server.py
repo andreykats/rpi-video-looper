@@ -803,9 +803,18 @@ async def post_file_rename_handler(request: Request):
             status_code=500,
         )
 
-    updated_channels = _rewrite_playlist_after_filename_change(
-        pm, target.parent, target.name, new_name,
-    )
+    src_usb = _usb_root_for(target)
+    updated_channels: list = []
+    if src_usb is not None:
+        try:
+            old_rel = str(target.relative_to(src_usb))
+            new_rel = str(new_path.relative_to(src_usb))
+        except ValueError:
+            old_rel = new_rel = None
+        if old_rel is not None and new_rel is not None:
+            updated_channels = _rewrite_playlists_for_path_change(
+                pm, src_usb, old_rel, new_rel,
+            )
     broker.publish({'type': 'pool.changed', 'ts': time.time()})
     for ch in updated_channels:
         broker.publish({
@@ -821,61 +830,60 @@ async def post_file_rename_handler(request: Request):
     })
 
 
-def _rewrite_playlist_after_filename_change(
-    pm, parent: Path, old_name: str, new_name: Optional[str],
-) -> list:
-    """Update playlist.json in `parent` to reflect a rename or delete.
-
-    `new_name=None` deletes entries matching `parent/old_name`; otherwise
-    renames those entries' path to `parent/new_name`. Both old/new paths
-    are translated to USB-root-relative form before the comparison.
-
-    Stage 1: only rewrites the playlist that lives in `parent` itself
-    (when `parent` is a numbered channel folder). Stage 2 widens this to
-    walk every channel playlist on the same USB root.
+def _iter_channel_playlists(usb_root):
+    """Yield (channel_num, channel_dir, meta) for every numbered channel
+    folder under `usb_root` whose playlist.json reads cleanly. Channels
+    without a v4 playlist file are skipped (their content comes from the
+    legacy alphabetical scan, which doesn't reference paths).
     """
-    json_path = parent / playlist_io.PLAYLIST_FILENAME
-    if not json_path.exists():
-        return []
-    meta = playlist_io.read_playlist_meta(str(parent))
-    if meta is None:
-        return []
-    usb_root = _usb_root_for(parent)
-    if usb_root is None:
-        return []
-    try:
-        old_rel = str((parent / old_name).resolve(strict=False)
-                      .relative_to(usb_root))
-    except ValueError:
-        return []
-    if new_name is None:
-        new_rel = None
-    else:
+    root_str = str(usb_root)
+    for ch_num in range(1, 14):
+        channel_dir = os.path.join(root_str, str(ch_num))
+        if not os.path.isdir(channel_dir):
+            continue
+        meta = playlist_io.read_playlist_meta(channel_dir)
+        if meta is None:
+            continue
+        yield ch_num, channel_dir, meta
+
+
+def _rewrite_playlists_for_path_change(
+    pm, usb_root: Path, old_rel: str, new_rel: Optional[str],
+) -> list:
+    """Walk every channel playlist on `usb_root` and update entries
+    whose `path` equals `old_rel`.
+
+    `new_rel=None` removes the matching entries; otherwise replaces the
+    path. Used by file rename/delete/move (exact-match). Stage 3 layers
+    a prefix-aware variant on top for folder ops.
+
+    Returns the channel numbers whose playlists actually changed.
+    """
+    updated = []
+    for ch_num, channel_dir, meta in _iter_channel_playlists(usb_root):
+        ents = meta['entries']
+        if new_rel is None:
+            new_ents = [e for e in ents if e['path'] != old_rel]
+        else:
+            new_ents = [
+                {'path': new_rel if e['path'] == old_rel else e['path']}
+                for e in ents
+            ]
+        if new_ents == ents:
+            continue
         try:
-            new_rel = str((parent / new_name).resolve(strict=False)
-                          .relative_to(usb_root))
-        except ValueError:
-            return []
-    ents = meta['entries']
-    if new_rel is None:
-        new_ents = [e for e in ents if e['path'] != old_rel]
-    else:
-        new_ents = [
-            {'path': new_rel if e['path'] == old_rel else e['path']}
-            for e in ents
-        ]
-    if new_ents == ents:
-        return []
-    try:
-        playlist_io.write_playlist_json(str(parent), new_ents, name=meta['name'])
-    except (ValueError, OSError) as e:
-        log.exception('rewriting playlist.json failed: %s', e)
-        return []
-    ch = _channel_for_dir(parent)
-    if ch is None:
-        return []
-    pm.publish_playlist_intent(ch, _build_playlist_from_disk(pm, str(parent)))
-    return [ch]
+            playlist_io.write_playlist_json(
+                channel_dir, new_ents, name=meta['name'],
+            )
+        except (ValueError, OSError) as e:
+            log.exception('rewriting %s/playlist.json failed: %s',
+                          channel_dir, e)
+            continue
+        pm.publish_playlist_intent(
+            ch_num, _build_playlist_from_disk(pm, channel_dir),
+        )
+        updated.append(ch_num)
+    return updated
 
 
 async def post_file_delete_handler(request: Request):
@@ -899,8 +907,7 @@ async def post_file_delete_handler(request: Request):
             'error': 'playback-conflict',
             'hint': 'Switch channels before deleting the active file.',
         }, status_code=409)
-    parent = target.parent
-    name = target.name
+    src_usb = _usb_root_for(target)
     try:
         os.unlink(target)
     except OSError as e:
@@ -908,9 +915,16 @@ async def post_file_delete_handler(request: Request):
             {'ok': False, 'error': 'delete-failed', 'detail': str(e)},
             status_code=500,
         )
-    updated_channels = _rewrite_playlist_after_filename_change(
-        pm, parent, name, None,
-    )
+    updated_channels: list = []
+    if src_usb is not None:
+        try:
+            old_rel = str(target.relative_to(src_usb))
+        except ValueError:
+            old_rel = None
+        if old_rel is not None:
+            updated_channels = _rewrite_playlists_for_path_change(
+                pm, src_usb, old_rel, None,
+            )
     broker.publish({'type': 'pool.changed', 'ts': time.time()})
     for ch in updated_channels:
         broker.publish({
@@ -957,8 +971,8 @@ async def post_file_move_handler(request: Request):
     new_path = target_dir / target_file.name
     if new_path.exists():
         return JSONResponse({'ok': False, 'error': 'name-exists'}, status_code=409)
-    src_parent = target_file.parent
-    name = target_file.name
+    src_usb = _usb_root_for(target_file)
+    dest_usb = _usb_root_for(target_dir)
     try:
         os.rename(target_file, new_path)
     except OSError as e:
@@ -967,9 +981,22 @@ async def post_file_move_handler(request: Request):
             status_code=500,
         )
 
-    updated_channels = _rewrite_playlist_after_filename_change(
-        pm, src_parent, name, None,
-    )
+    updated_channels: list = []
+    if src_usb is not None:
+        try:
+            old_rel = str(target_file.relative_to(src_usb))
+        except ValueError:
+            old_rel = None
+        new_rel = None
+        if dest_usb == src_usb:
+            try:
+                new_rel = str(new_path.relative_to(src_usb))
+            except ValueError:
+                new_rel = None
+        if old_rel is not None:
+            updated_channels = _rewrite_playlists_for_path_change(
+                pm, src_usb, old_rel, new_rel,
+            )
     broker.publish({'type': 'pool.changed', 'ts': time.time()})
     for ch in updated_channels:
         broker.publish({
