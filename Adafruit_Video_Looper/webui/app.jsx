@@ -651,7 +651,7 @@ function App() {
                 handleReboot();
               }
             }} disabled={restarting} />
-            <HwButton label="⚙ SETTINGS" color="orange" onClick={() => setSettingsOpen(true)} />
+            <HwButton label="★ SETTINGS" color="grey" onClick={() => setSettingsOpen(true)} />
           </div>
         </div>
       </header>
