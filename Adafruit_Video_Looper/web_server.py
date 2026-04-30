@@ -854,8 +854,7 @@ def _rewrite_playlists_for_path_change(
     whose `path` equals `old_rel`.
 
     `new_rel=None` removes the matching entries; otherwise replaces the
-    path. Used by file rename/delete/move (exact-match). Stage 3 layers
-    a prefix-aware variant on top for folder ops.
+    path. Used by file rename/delete/move (exact-match).
 
     Returns the channel numbers whose playlists actually changed.
     """
@@ -867,6 +866,53 @@ def _rewrite_playlists_for_path_change(
         else:
             new_ents = [
                 {'path': new_rel if e['path'] == old_rel else e['path']}
+                for e in ents
+            ]
+        if new_ents == ents:
+            continue
+        try:
+            playlist_io.write_playlist_json(
+                channel_dir, new_ents, name=meta['name'],
+            )
+        except (ValueError, OSError) as e:
+            log.exception('rewriting %s/playlist.json failed: %s',
+                          channel_dir, e)
+            continue
+        pm.publish_playlist_intent(
+            ch_num, _build_playlist_from_disk(pm, channel_dir),
+        )
+        updated.append(ch_num)
+    return updated
+
+
+def _rewrite_playlists_for_folder_change(
+    pm, usb_root: Path, old_folder_rel: str, new_folder_rel: Optional[str],
+) -> list:
+    """Walk every channel playlist on `usb_root` and update entries
+    whose `path` lives inside `old_folder_rel` (prefix match).
+
+    `new_folder_rel=None` removes the matching entries (folder delete);
+    otherwise replaces the prefix (folder rename). The trailing slash on
+    the prefix is critical: renaming `videos` must not match entries
+    under `videos2`.
+
+    Returns the channel numbers whose playlists actually changed.
+    """
+    old_prefix = old_folder_rel.rstrip('/') + '/'
+    new_prefix = (
+        new_folder_rel.rstrip('/') + '/' if new_folder_rel else None
+    )
+    updated = []
+    for ch_num, channel_dir, meta in _iter_channel_playlists(usb_root):
+        ents = meta['entries']
+        if new_prefix is None:
+            new_ents = [
+                e for e in ents if not e['path'].startswith(old_prefix)
+            ]
+        else:
+            new_ents = [
+                ({'path': new_prefix + e['path'][len(old_prefix):]}
+                 if e['path'].startswith(old_prefix) else e)
                 for e in ents
             ]
         if new_ents == ents:
@@ -1078,6 +1124,7 @@ async def post_file_upload_handler(request: Request):
 
 
 async def post_folder_rename_handler(request: Request):
+    pm = request.app.state.pm
     broker: Broker = request.app.state.broker
     try:
         body = await request.json()
@@ -1097,6 +1144,7 @@ async def post_folder_rename_handler(request: Request):
     new_path = target.parent / new_name
     if new_path.exists():
         return JSONResponse({'ok': False, 'error': 'name-exists'}, status_code=409)
+    src_usb = _usb_root_for(target)
     try:
         os.rename(target, new_path)
     except OSError as e:
@@ -1104,11 +1152,34 @@ async def post_folder_rename_handler(request: Request):
             {'ok': False, 'error': 'rename-failed', 'detail': str(e)},
             status_code=500,
         )
+    updated_channels: list = []
+    if src_usb is not None:
+        try:
+            old_folder_rel = str(target.relative_to(src_usb))
+            new_folder_rel = str(new_path.relative_to(src_usb))
+        except ValueError:
+            old_folder_rel = new_folder_rel = None
+        if old_folder_rel and new_folder_rel:
+            updated_channels = _rewrite_playlists_for_folder_change(
+                pm, src_usb, old_folder_rel, new_folder_rel,
+            )
     broker.publish({'type': 'pool.changed', 'ts': time.time()})
-    return JSONResponse({'ok': True, 'newPath': str(new_path)})
+    for ch in updated_channels:
+        broker.publish({
+            'type': 'playlist.changed',
+            'ts': time.time(),
+            'channel': ch,
+            'source': 'json',
+        })
+    return JSONResponse({
+        'ok': True,
+        'newPath': str(new_path),
+        'playlistsUpdated': updated_channels,
+    })
 
 
 async def post_folder_delete_handler(request: Request):
+    pm = request.app.state.pm
     broker: Broker = request.app.state.broker
     try:
         body = await request.json()
@@ -1122,6 +1193,7 @@ async def post_folder_delete_handler(request: Request):
         return JSONResponse({'ok': False, 'error': 'protected-path'}, status_code=403)
     if not target.is_dir():
         return JSONResponse({'ok': False, 'error': 'not-a-dir'}, status_code=400)
+    src_usb = _usb_root_for(target)
     try:
         shutil.rmtree(target)
     except OSError as e:
@@ -1129,8 +1201,25 @@ async def post_folder_delete_handler(request: Request):
             {'ok': False, 'error': 'delete-failed', 'detail': str(e)},
             status_code=500,
         )
+    updated_channels: list = []
+    if src_usb is not None:
+        try:
+            old_folder_rel = str(target.relative_to(src_usb))
+        except ValueError:
+            old_folder_rel = None
+        if old_folder_rel:
+            updated_channels = _rewrite_playlists_for_folder_change(
+                pm, src_usb, old_folder_rel, None,
+            )
     broker.publish({'type': 'pool.changed', 'ts': time.time()})
-    return JSONResponse({'ok': True})
+    for ch in updated_channels:
+        broker.publish({
+            'type': 'playlist.changed',
+            'ts': time.time(),
+            'channel': ch,
+            'source': 'json',
+        })
+    return JSONResponse({'ok': True, 'playlistsUpdated': updated_channels})
 
 
 async def get_config_handler(request: Request):
