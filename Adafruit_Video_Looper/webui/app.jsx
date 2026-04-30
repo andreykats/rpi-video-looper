@@ -387,14 +387,15 @@ function App() {
       _uid: newUid('drop'),
     };
 
-    let nextItems = null;
-    setPlaylists(p => {
-      const items = [...(p[chan] || [])];
-      const insertAt = Math.min(idx, items.length);
-      items.splice(insertAt, 0, newEntry);
-      nextItems = items;
-      return { ...p, [chan]: items };
-    });
+    // Compute the next item list synchronously from the current closure
+    // state so we can pass it straight to persistPlaylist. React 18
+    // schedules the setState updater asynchronously — capturing inside
+    // it and using the value on the next line races (the updater hasn't
+    // run yet, so the captured reference is still null).
+    const prev = playlists[chan] || [];
+    const insertAt = Math.min(idx, prev.length);
+    const nextItems = [...prev.slice(0, insertAt), newEntry, ...prev.slice(insertAt)];
+    setPlaylists(p => ({ ...p, [chan]: nextItems }));
 
     try {
       await persistPlaylist(chan, nextItems);
