@@ -637,11 +637,6 @@ function App() {
 
         <div className="chassis-top-r">
           <div className="transport">
-            <HwButton
-              label="☰ LOGS"
-              color="beige"
-              onClick={() => setLogOpen(o => !o)}
-            />
             <HwButton label="▶ PLAY" color="green"
               onClick={handleResetBroadcast}
               disabled={restarting} />
@@ -650,6 +645,11 @@ function App() {
                 handleReboot();
               }
             }} disabled={restarting} />
+            <HwButton
+              label="☰ LOGS"
+              color="beige"
+              onClick={() => setLogOpen(o => !o)}
+            />
             <HwButton label="★ SETTINGS" color="grey" onClick={() => setSettingsOpen(true)} />
           </div>
         </div>

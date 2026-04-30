@@ -235,7 +235,6 @@ function ChannelTimeline({
                           isNes={isNesClip}
                           colorStripe={palette ? palette.stripe : null}
                           colorBg={palette ? palette.bg : null}
-                          onDoubleClick={() => onSavePlaylist(ch.num, null, entry._uid, null)}
                           onContextMenu={(e) => {
                             e.preventDefault();
                             e.stopPropagation();
@@ -316,7 +315,7 @@ function clipPxWidth(entry, pxPerSec) {
   return Math.max(8, dur * pxPerSec);
 }
 
-function ClipBlock({ entry, width, isNes, colorStripe, colorBg, onDoubleClick, onContextMenu, onDragStart }) {
+function ClipBlock({ entry, width, isNes, colorStripe, colorBg, onContextMenu, onDragStart }) {
   const tooSmall = width < 60;
   if (isNes) {
     return (
@@ -324,7 +323,6 @@ function ClipBlock({ entry, width, isNes, colorStripe, colorBg, onDoubleClick, o
         className="clip clip-nes"
         draggable
         onDragStart={onDragStart}
-        onDoubleClick={onDoubleClick}
         onContextMenu={onContextMenu}
         style={{ width }}
         title={`${entry.displayName} — interactive ROM (right-click to eject)`}>
@@ -344,7 +342,6 @@ function ClipBlock({ entry, width, isNes, colorStripe, colorBg, onDoubleClick, o
       className="clip"
       draggable
       onDragStart={onDragStart}
-      onDoubleClick={onDoubleClick}
       onContextMenu={onContextMenu}
       style={style}
       title={`${entry.displayName} — ${fmtDur(entry.durationSec)}`}>
