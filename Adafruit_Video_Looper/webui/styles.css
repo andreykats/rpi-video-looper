@@ -1754,7 +1754,7 @@ input, textarea, [contenteditable="true"], .log-drawer-body {
   bottom: 0;
   width: 0;
   pointer-events: none;
-  z-index: 6;
+  z-index: 2;
   transition: left 500ms linear;
 }
 .tl-playhead-global-line {
