@@ -642,8 +642,7 @@ function App() {
               color="beige"
               onClick={() => setLogOpen(o => !o)}
             />
-            <HwButton label="▶ SYNC" color="green" disabled />
-            <HwButton label="● RBC" color="blue"
+            <HwButton label="▶ PLAY" color="green"
               onClick={handleResetBroadcast}
               disabled={restarting} />
             <HwButton label="● REBOOT" color="red" onClick={() => {
